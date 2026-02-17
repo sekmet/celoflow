@@ -25,8 +25,7 @@ export const LanguageSwitcher: React.FC<LanguageSwitcherProps> = ({ onLanguageCh
     setLanguage(code);
     setIsOpen(false);
     onLanguageChange?.(code);
-    // Reload page to apply language change globally
-    window.location.reload();
+    // Language change will propagate via event system to all components using useI18n()
   };
 
   const current = LANGUAGE_OPTIONS.find((option) => option.code === language) || LANGUAGE_OPTIONS[0];
