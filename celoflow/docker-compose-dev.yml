@@ -1,0 +1,45 @@
+services:
+  celoflow:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      # Server
+      - PORT=8000
+      - API_HOST=0.0.0.0
+      - LOG_LEVEL=INFO
+      # Agent Identity
+      - AGENT_NAME=Remittance Agent
+      - AGENT_DOMAIN=celoflow.remittance
+      # Model Provider (Azure Forge)
+      - MODEL_PROVIDER=azure_openai
+      - AZURE_FORGE_API_KEY=your-api-key
+      - AZURE_FORGE_ENDPOINT=your-api-endpoint
+      - AZURE_OPENAI_API_VERSION=2023-05-15
+      - MODEL_NAME=gpt-5-chat
+      # Chain (Anvil via host)
+      - CELO_RPC_URL=http://host.docker.internal:8545
+      - CHAIN_ID=11142220
+      # Agent Wallet
+      - AGENT_PRIVATE_KEY=your-private-key
+      # Contract Addresses
+      - IDENTITY_REGISTRY=0xc6e7DF5E7b4f2A278906862b61205850344D4e7d
+      - REPUTATION_REGISTRY=0x59b670e9fA9D0A427751Af201D676719a970857b
+      - TEE_REGISTRY=0x4ed7c70F96B99c776995fB64377f0d4aB3B0e1C1
+      - AGENT_ID=0
+      # TEE (dstack simulator via unix socket)
+      - USE_TEE=true
+      - TEE_ENDPOINT=/var/run/dstack.sock
+      - DSTACK_SIMULATOR_ENDPOINT=/var/run/dstack.sock
+    volumes:
+      - ./data:/app/data
+      # Mount dstack simulator unix socket into container
+      - ./dstack-simulator/dstack.sock:/var/run/dstack.sock
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/info"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
