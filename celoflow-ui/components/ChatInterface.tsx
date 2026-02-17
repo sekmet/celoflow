@@ -73,6 +73,20 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ className = '', fu
       type: 'text'
     }
   ]);
+
+  // Update initial message when language changes
+  useEffect(() => {
+    setMessages(prev => {
+      const updated = [...prev];
+      if (updated.length > 0 && updated[0].id === '1') {
+        updated[0] = {
+          ...updated[0],
+          content: t('Hi! I\'m CeloFlow. I can help you send money globally using the Celo blockchain. Where would you like to send money today?')
+        };
+      }
+      return updated;
+    });
+  }, [t]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
