@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Send, Bot, User, CheckCircle2, ChevronRight, Loader2, RefreshCcw, History, CalendarClock, X, Search, Activity, Zap, TrendingUp, AlertCircle, Mic, ChevronDown, Info, Ban, Share2, HelpCircle } from 'lucide-react';
-import { parseUserMessage } from '../services/geminiService';
+import { MarkdownContent } from './MarkdownContent';
+import { streamChat, type ChatMessage as CeloflowMessage } from '../lib/celoflow-client';
 import { getExchangeRate } from '../services/currencyService';
 import { Message, TransactionIntent, TransactionHistoryItem } from '../types';
 import { SUGGESTED_PROMPTS, SUPPORTED_CURRENCIES } from '../constants';
@@ -21,6 +22,9 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ className = '', fu
   ]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [isStreaming, setIsStreaming] = useState(false);
+  const [streamingMsgId, setStreamingMsgId] = useState<string | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
   const [showHistory, setShowHistory] = useState(false);
   const [history, setHistory] = useState<TransactionHistoryItem[]>([]);
   const [historySearch, setHistorySearch] = useState('');
@@ -123,7 +127,12 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ className = '', fu
   };
 
   const handleSend = async (text: string = input) => {
-    if (!text.trim()) return;
+    if (!text.trim() || isStreaming) return;
+
+    // Abort any previous stream
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
 
     // Add User Message
     const userMsg: Message = { id: Date.now().toString(), role: 'user', content: text };
@@ -131,21 +140,78 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ className = '', fu
     setInput('');
     setIsLoading(true);
 
-    // Call Gemini
-    const result = await parseUserMessage(text);
-
+    // Prepare an empty assistant message for streaming
+    const assistantId = (Date.now() + 1).toString();
+    const assistantMsg: Message = {
+      id: assistantId,
+      role: 'assistant',
+      content: '',
+      type: 'text',
+    };
+    setMessages(prev => [...prev, assistantMsg]);
+    setStreamingMsgId(assistantId);
+    setIsStreaming(true);
     setIsLoading(false);
 
-    // Add Assistant Message
-    const assistantMsg: Message = {
-      id: (Date.now() + 1).toString(),
-      role: 'assistant',
-      content: result.text,
-      type: result.transaction ? 'transaction_preview' : 'text',
-      transactionData: result.transaction
+    // Build messages array for the backend
+    const chatMessages: CeloflowMessage[] = messages
+      .filter(m => m.role === 'user' || m.role === 'assistant')
+      .map(m => ({ role: m.role as 'user' | 'assistant', content: m.content }))
+      .concat({ role: 'user', content: text });
+
+    // Use requestAnimationFrame batching for smooth rendering
+    let pendingContent = '';
+    let rafId: number | null = null;
+
+    const flushContent = () => {
+      const content = pendingContent;
+      setMessages(prev =>
+        prev.map(m => (m.id === assistantId ? { ...m, content } : m)),
+      );
+      rafId = null;
     };
 
-    setMessages(prev => [...prev, assistantMsg]);
+    try {
+      await streamChat({
+        messages: chatMessages,
+        signal: controller.signal,
+        onContent: (fullContent) => {
+          pendingContent = fullContent;
+          if (!rafId) {
+            rafId = requestAnimationFrame(flushContent);
+          }
+        },
+        onComplete: (fullContent) => {
+          // Ensure final content is flushed
+          if (rafId) cancelAnimationFrame(rafId);
+          setMessages(prev =>
+            prev.map(m =>
+              m.id === assistantId ? { ...m, content: fullContent } : m,
+            ),
+          );
+        },
+      });
+    } catch (error: any) {
+      if (error.name !== 'AbortError') {
+        console.error('Stream error:', error);
+        setMessages(prev =>
+          prev.map(m =>
+            m.id === assistantId
+              ? {
+                  ...m,
+                  content:
+                    m.content ||
+                    'Sorry, I encountered an error connecting to the server. Please try again.',
+                }
+              : m,
+          ),
+        );
+      }
+    } finally {
+      if (rafId) cancelAnimationFrame(rafId);
+      setIsStreaming(false);
+      setStreamingMsgId(null);
+    }
   };
 
   const updateTransactionData = (msgId: string, updates: Partial<TransactionIntent>) => {
@@ -438,13 +504,13 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ className = '', fu
                         {/* Avatar */}
                         {msg.role === 'assistant' && msg.type === 'text' && (
                              <div className="text-sm bg-white dark:bg-gray-700 dark:text-gray-100 p-4 rounded-2xl rounded-tl-none shadow-sm text-gray-700 border border-gray-100 dark:border-gray-600">
-                                {msg.content}
+                                <MarkdownContent content={msg.content} />
                              </div>
                         )}
 
                         {msg.role === 'user' && (
                              <div className="text-sm bg-gray-900 dark:bg-celo-green text-white p-4 rounded-2xl rounded-tr-none shadow-md">
-                                {msg.content}
+                                <MarkdownContent content={msg.content} />
                              </div>
                         )}
 
@@ -452,7 +518,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ className = '', fu
                         {msg.role === 'assistant' && msg.type === 'transaction_preview' && msg.transactionData && (
                             <div className="bg-white dark:bg-gray-700 rounded-2xl shadow-lg border border-gray-100 dark:border-gray-600 overflow-hidden transform transition-all">
                                 <div className="p-4 border-b border-gray-50 dark:border-gray-600 bg-gray-50/50 dark:bg-gray-800/30">
-                                    <p className="text-sm text-gray-600 dark:text-gray-300 mb-1">{msg.content}</p>
+                                    <div className="text-sm text-gray-600 dark:text-gray-300 mb-1"><MarkdownContent content={msg.content} /></div>
                                     <div className="flex items-center justify-between mt-3">
                                         <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Best Quote Found</span>
                                         <div className="bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 px-2 py-0.5 rounded text-[10px] font-bold flex items-center gap-1">

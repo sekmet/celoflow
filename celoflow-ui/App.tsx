@@ -1,10 +1,14 @@
 import React, { useState, useEffect } from 'react';
+import { WagmiProvider } from 'wagmi';
+import { QueryClientProvider } from '@tanstack/react-query';
 import { Bot, ChevronRight, Globe, Lock, Wallet, Zap, CheckCircle2, Moon, Sun, ArrowLeft } from 'lucide-react';
 import { ChatInterface } from './components/ChatInterface';
 import { SmartRouter } from './components/SmartRouter';
+import { WalletConnect } from './components/WalletConnect';
+import { config, queryClient } from './lib/wagmi-config';
 import { NAV_LINKS } from './constants';
 
-function App() {
+function AppContent() {
   const [isDark, setIsDark] = useState(false);
   const [currentView, setCurrentView] = useState<'landing' | 'app'>('landing');
 
@@ -26,14 +30,14 @@ function App() {
               </div>
               <span className="font-display font-bold text-xl tracking-tight text-gray-900 dark:text-white group-hover:opacity-80 transition-opacity">CeloFlow</span>
             </div>
-            <div className="flex items-center gap-4">
+            <div className="flex items-center gap-3">
+                 <WalletConnect />
                  <button 
                     onClick={() => setIsDark(!isDark)}
                     className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-gray-600 dark:text-gray-300"
                 >
                     {isDark ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
                 </button>
-                <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-celo-green to-blue-500 border-2 border-white dark:border-gray-800 shadow-sm"></div>
             </div>
         </nav>
         <div className="flex-1 flex relative overflow-hidden">
@@ -73,7 +77,8 @@ function App() {
               ))}
             </div>
 
-            <div className="flex items-center gap-4">
+            <div className="flex items-center gap-3">
+                <WalletConnect />
                 <button 
                     onClick={() => setIsDark(!isDark)}
                     className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-gray-600 dark:text-gray-300"
@@ -241,6 +246,16 @@ function App() {
         </div>
       </footer>
     </div>
+  );
+}
+
+function App() {
+  return (
+    <WagmiProvider config={config}>
+      <QueryClientProvider client={queryClient}>
+        <AppContent />
+      </QueryClientProvider>
+    </WagmiProvider>
   );
 }
 
