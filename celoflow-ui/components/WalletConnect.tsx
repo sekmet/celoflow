@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAccount, useConnect, useDisconnect, useBalance } from 'wagmi';
 import { Wallet, ChevronDown, LogOut, Copy, Check, X } from 'lucide-react';
+import { useI18n } from '../lib/language';
 
 function truncateAddress(address: string): string {
   return `${address.slice(0, 6)}…${address.slice(-4)}`;
@@ -20,6 +21,7 @@ export const WalletConnect: React.FC = () => {
   const { connectors, connect, isPending } = useConnect();
   const { disconnect } = useDisconnect();
   const { data: balanceData } = useBalance({ address });
+  const { t } = useI18n();
 
   const [showOptions, setShowOptions] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
@@ -69,11 +71,11 @@ export const WalletConnect: React.FC = () => {
             <div className="p-4 border-b border-gray-100 dark:border-gray-700">
               <div className="flex items-center justify-between mb-2">
                 <span className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wider font-semibold">
-                  Connected
+                  {t('Connected')}
                 </span>
                 <span className="flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
                   <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
-                  {chain?.name || 'Unknown'}
+                  {chain?.name || t('Unknown')}
                 </span>
               </div>
               <div className="flex items-center justify-between">
@@ -83,7 +85,7 @@ export const WalletConnect: React.FC = () => {
                 <button
                   onClick={handleCopy}
                   className="p-1.5 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
-                  title="Copy address"
+                  title={t('Copy address')}
                 >
                   {copied ? (
                     <Check className="w-3.5 h-3.5 text-green-500" />
@@ -96,7 +98,7 @@ export const WalletConnect: React.FC = () => {
 
             {balanceData && (
               <div className="px-4 py-3 border-b border-gray-100 dark:border-gray-700">
-                <div className="text-xs text-gray-500 dark:text-gray-400 mb-1">Balance</div>
+                <div className="text-xs text-gray-500 dark:text-gray-400 mb-1">{t('Balance')}</div>
                 <div className="text-lg font-bold text-gray-900 dark:text-white">
                   {formatBalance(balanceData.value, balanceData.decimals)}{' '}
                   <span className="text-sm text-gray-500 dark:text-gray-400 font-normal">
@@ -114,7 +116,7 @@ export const WalletConnect: React.FC = () => {
               className="w-full flex items-center gap-2 px-4 py-3 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/10 transition-colors"
             >
               <LogOut className="w-4 h-4" />
-              Disconnect Wallet
+              {t('Disconnect Wallet')}
             </button>
           </div>
         )}
@@ -130,14 +132,14 @@ export const WalletConnect: React.FC = () => {
         className="flex items-center gap-2 px-4 py-2 bg-celo-green text-white rounded-full text-sm font-medium hover:bg-green-500 transition-colors disabled:opacity-50 shadow-lg shadow-green-500/20"
       >
         <Wallet className="w-4 h-4" />
-        {isPending ? 'Connecting…' : 'Connect Wallet'}
+        {isPending ? t('Connecting…') : t('Connect Wallet')}
       </button>
 
       {showOptions && (
         <div className="absolute right-0 top-full mt-2 w-64 bg-white dark:bg-gray-800 rounded-xl shadow-xl border border-gray-200 dark:border-gray-700 overflow-hidden z-50 animate-fade-in-up">
           <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 dark:border-gray-700">
             <span className="text-sm font-semibold text-gray-900 dark:text-white">
-              Connect a Wallet
+              {t('Connect a Wallet')}
             </span>
             <button
               onClick={() => setShowOptions(false)}

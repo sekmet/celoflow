@@ -9,11 +9,13 @@ import { config, queryClient } from './lib/wagmi-config';
 import { ContactsManager } from './components/ContactsManager';
 import { LanguageSwitcher } from './components/LanguageSwitcher';
 import { NAV_LINKS } from './constants';
+import { useI18n } from './lib/language';
 
 function AppContent() {
   const [isDark, setIsDark] = useState(false);
   const [currentView, setCurrentView] = useState<'landing' | 'app'>('landing');
   const [showContacts, setShowContacts] = useState(false);
+  const { t } = useI18n();
 
   useEffect(() => {
     if (isDark) {
@@ -37,7 +39,7 @@ function AppContent() {
                  <button
                     onClick={() => setShowContacts(true)}
                     className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-gray-600 dark:text-gray-300"
-                    title="Contacts"
+                    title={t('Contacts')}
                  >
                     <Users className="w-5 h-5" />
                  </button>
@@ -84,7 +86,7 @@ function AppContent() {
             <div className="hidden md:flex items-center space-x-8">
               {NAV_LINKS.map(link => (
                 <a key={link.name} href={link.href} className="text-sm font-medium text-gray-600 dark:text-gray-300 hover:text-black dark:hover:text-white transition-colors">
-                  {link.name}
+                  {t(link.name)}
                 </a>
               ))}
             </div>
@@ -101,7 +103,7 @@ function AppContent() {
                     onClick={() => setCurrentView('app')}
                     className="bg-black dark:bg-white text-white dark:text-black px-5 py-2 rounded-full text-sm font-medium hover:bg-gray-800 dark:hover:bg-gray-200 transition-colors flex items-center gap-2"
                 >
-                    Launch App
+                    {t('Launch App')}
                     <ChevronRight className="w-4 h-4" />
                 </button>
             </div>
@@ -123,14 +125,14 @@ function AppContent() {
                     <div className="max-w-2xl">
                         <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-300 text-xs font-bold mb-6 tracking-wide">
                             <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
-                            SMART AGENT LIVE
+                            {t('SMART AGENT LIVE')}
                         </div>
                         <h1 className="text-5xl lg:text-7xl font-display font-bold tracking-tight text-gray-900 dark:text-white leading-[1.1] mb-6">
-                            Send Money Like <br/>
-                            You Send a <span className="text-celo-green">Message</span>
+                            {t('Send Money Like')} <br/>
+                            {t('You Send a')} <span className="text-celo-green">{t('Message')}</span>
                         </h1>
                         <p className="text-lg text-gray-600 dark:text-gray-400 mb-8 leading-relaxed max-w-lg">
-                            The financial agent that turns your words into instant global transfers on the Celo blockchain. Simple, secure, and fast.
+                            {t('The financial agent that turns your words into instant global transfers on the Celo blockchain. Simple, secure, and fast.')}
                         </p>
                         
                         <div className="flex flex-col sm:flex-row gap-4">
@@ -138,11 +140,11 @@ function AppContent() {
                                 onClick={() => setCurrentView('app')}
                                 className="px-8 py-4 bg-celo-green text-white font-bold rounded-full hover:bg-green-500 transition-all shadow-xl shadow-green-500/20 active:scale-95 flex items-center justify-center gap-2"
                             >
-                                Try CeloFlow Now
+                                {t('Try CeloFlow Now')}
                                 <Bot className="w-5 h-5" />
                             </button>
                             <button className="px-8 py-4 bg-white dark:bg-gray-800 text-gray-900 dark:text-white border border-gray-200 dark:border-gray-700 font-bold rounded-full hover:bg-gray-50 dark:hover:bg-gray-700 transition-all flex items-center justify-center">
-                                View Activity
+                                {t('View Activity')}
                             </button>
                         </div>
 
@@ -152,7 +154,7 @@ function AppContent() {
                                     <img key={i} src={`https://picsum.photos/40/40?random=${i}`} className="w-10 h-10 rounded-full border-2 border-white dark:border-gray-900" alt="User" />
                                 ))}
                             </div>
-                            <p className="text-sm text-gray-500 dark:text-gray-400 font-medium">Trusted by 10,000+ early users</p>
+                            <p className="text-sm text-gray-500 dark:text-gray-400 font-medium">{t('Trusted by 10,000+ early users')}</p>
                         </div>
                     </div>
 
@@ -167,8 +169,8 @@ function AppContent() {
                                 <CheckCircle2 className="w-6 h-6" />
                              </div>
                              <div>
-                                <p className="text-xs text-gray-500 dark:text-gray-400">Just Saved</p>
-                                <p className="font-bold text-gray-900 dark:text-white">$3.50 vs Bank</p>
+                                <p className="text-xs text-gray-500 dark:text-gray-400">{t('Just Saved')}</p>
+                                <p className="font-bold text-gray-900 dark:text-white">{t('$3.50 vs Bank')}</p>
                              </div>
                         </div>
                     </div>
@@ -181,26 +183,26 @@ function AppContent() {
         <section id="features" className="py-24 bg-gray-50 dark:bg-gray-800/50 transition-colors duration-300">
             <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
                 <div className="text-center max-w-3xl mx-auto mb-16">
-                    <h2 className="text-3xl font-display font-bold text-gray-900 dark:text-white mb-4">Built for the Real World</h2>
-                    <p className="text-gray-600 dark:text-gray-400">CeloFlow leverages advanced blockchain infrastructure to make money move as freely as information.</p>
+                    <h2 className="text-3xl font-display font-bold text-gray-900 dark:text-white mb-4">{t('Built for the Real World')}</h2>
+                    <p className="text-gray-600 dark:text-gray-400">{t('CeloFlow leverages advanced blockchain infrastructure to make money move as freely as information.')}</p>
                 </div>
 
                 <div className="grid md:grid-cols-3 gap-8">
                     {[
                         {
                             icon: <Globe className="w-6 h-6 text-blue-500" />,
-                            title: "Mento Protocol",
-                            desc: "Seamlessly swaps stablecoins (cUSD, cEUR, cREAL) with minimal slippage using decentralized stability mechanisms."
+                            title: t('Mento Protocol'),
+                            desc: t('Seamlessly swaps stablecoins (cUSD, cEUR, cREAL) with minimal slippage using decentralized stability mechanisms.')
                         },
                         {
                             icon: <Lock className="w-6 h-6 text-green-500" />,
-                            title: "TEE Security",
-                            desc: "Your keys are managed in a Trusted Execution Environment. You authenticate; the enclave signs. No seed phrases to lose."
+                            title: t('TEE Security'),
+                            desc: t('Your keys are managed in a Trusted Execution Environment. You authenticate; the enclave signs. No seed phrases to lose.')
                         },
                         {
                             icon: <Wallet className="w-6 h-6 text-purple-500" />,
-                            title: "Gas Abstraction",
-                            desc: "Pay transaction fees in the same currency you send. No need to hold CELO just to pay for gas."
+                            title: t('Gas Abstraction'),
+                            desc: t('Pay transaction fees in the same currency you send. No need to hold CELO just to pay for gas.')
                         }
                     ].map((feature, i) => (
                         <div key={i} className="bg-white dark:bg-gray-800 p-8 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700 hover:shadow-md transition-all">
@@ -225,15 +227,15 @@ function AppContent() {
         {/* CTA Section */}
         <section className="py-24 bg-white dark:bg-gray-900 relative overflow-hidden transition-colors duration-300">
              <div className="max-w-4xl mx-auto px-4 text-center relative z-10">
-                <h2 className="text-4xl md:text-5xl font-display font-bold mb-8 text-gray-900 dark:text-white">Ready to ditch the bank fees?</h2>
-                <p className="text-xl text-gray-600 dark:text-gray-400 mb-10">Join the thousands of users saving on every remittance with CeloFlow.</p>
+                <h2 className="text-4xl md:text-5xl font-display font-bold mb-8 text-gray-900 dark:text-white">{t('Ready to ditch the bank fees?')}</h2>
+                <p className="text-xl text-gray-600 dark:text-gray-400 mb-10">{t('Join the thousands of users saving on every remittance with CeloFlow.')}</p>
                 <div className="flex flex-col sm:flex-row justify-center gap-4">
-                    <input type="email" placeholder="Enter your email" className="px-6 py-4 rounded-full border border-gray-300 dark:border-gray-700 dark:bg-gray-800 dark:text-white focus:border-celo-green outline-none w-full sm:w-80" />
+                    <input type="email" placeholder={t('Enter your email')} className="px-6 py-4 rounded-full border border-gray-300 dark:border-gray-700 dark:bg-gray-800 dark:text-white focus:border-celo-green outline-none w-full sm:w-80" />
                     <button 
                         onClick={() => setCurrentView('app')}
                         className="px-8 py-4 bg-black dark:bg-white text-white dark:text-black font-bold rounded-full hover:bg-gray-800 dark:hover:bg-gray-200 transition-colors"
                     >
-                        Get Early Access
+                        {t('Get Early Access')}
                     </button>
                 </div>
              </div>
@@ -250,11 +252,11 @@ function AppContent() {
                 <span className="font-bold text-gray-900 dark:text-white">CeloFlow</span>
             </div>
             <div className="flex gap-8 text-sm text-gray-500 dark:text-gray-400">
-                <a href="#" className="hover:text-gray-900 dark:hover:text-white">Privacy Policy</a>
-                <a href="#" className="hover:text-gray-900 dark:hover:text-white">Terms of Service</a>
-                <a href="#" className="hover:text-gray-900 dark:hover:text-white">Contact</a>
+                <a href="#" className="hover:text-gray-900 dark:hover:text-white">{t('Privacy Policy')}</a>
+                <a href="#" className="hover:text-gray-900 dark:hover:text-white">{t('Terms of Service')}</a>
+                <a href="#" className="hover:text-gray-900 dark:hover:text-white">{t('Contact')}</a>
             </div>
-            <p className="text-sm text-gray-400">© 2024 CeloFlow. Built on Celo.</p>
+            <p className="text-sm text-gray-400">{t('© 2024 CeloFlow. Built on Celo.')}</p>
         </div>
       </footer>
     </div>

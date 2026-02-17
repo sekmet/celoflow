@@ -1,7 +1,10 @@
 import React from 'react';
 import { ArrowRight, Zap, RefreshCw, ShieldCheck } from 'lucide-react';
+import { useI18n } from '../lib/language';
 
 export const SmartRouter: React.FC = () => {
+  const { t } = useI18n();
+
   return (
     <div className="w-full bg-[#0F1115] text-white py-20 overflow-hidden relative">
         {/* Background Gradients */}
@@ -15,30 +18,30 @@ export const SmartRouter: React.FC = () => {
                 <div className="space-y-8">
                     <div className="inline-flex items-center space-x-2 bg-white/10 px-4 py-1.5 rounded-full border border-white/10">
                         <span className="w-2 h-2 rounded-full bg-celo-green animate-pulse" />
-                        <span className="text-sm font-medium text-celo-green">Smart Agent v2.1</span>
+                        <span className="text-sm font-medium text-celo-green">{t('Smart Agent v2.1')}</span>
                     </div>
                     
                     <h2 className="text-4xl md:text-5xl font-display font-bold leading-tight">
-                        AI that thinks like a <br/>
-                        <span className="text-transparent bg-clip-text bg-gradient-to-r from-celo-green to-teal-400">Market Maker.</span>
+                        {t('AI that thinks like a')} <br/>
+                        <span className="text-transparent bg-clip-text bg-gradient-to-r from-celo-green to-teal-400">{t('Market Maker.')}</span>
                     </h2>
                     
                     <p className="text-gray-400 text-lg leading-relaxed">
-                        CeloFlow scans decentralized exchanges (DEXs) and the Mento Protocol in real-time to find liquidity pools with the lowest slippage, ensuring your family gets the most out of every dollar sent.
+                        {t('CeloFlow scans decentralized exchanges (DEXs) and the Mento Protocol in real-time to find liquidity pools with the lowest slippage, ensuring your family gets the most out of every dollar sent.')}
                     </p>
 
                     <div className="grid grid-cols-3 gap-6 pt-8 border-t border-white/10">
                         <div>
                             <div className="text-3xl font-bold text-white mb-1">0.02%</div>
-                            <div className="text-sm text-gray-500">Slippage</div>
+                            <div className="text-sm text-gray-500">{t('Slippage')}</div>
                         </div>
                         <div>
                             <div className="text-3xl font-bold text-white mb-1">1.2s</div>
-                            <div className="text-sm text-gray-500">Route Time</div>
+                            <div className="text-sm text-gray-500">{t('Route Time')}</div>
                         </div>
                         <div>
                             <div className="text-3xl font-bold text-celo-green mb-1">$4.20</div>
-                            <div className="text-sm text-gray-500">Avg. Savings</div>
+                            <div className="text-sm text-gray-500">{t('Avg. Savings')}</div>
                         </div>
                     </div>
                 </div>
@@ -47,8 +50,8 @@ export const SmartRouter: React.FC = () => {
                 <div className="relative">
                     <div className="dark-glass rounded-3xl p-8 shadow-2xl border border-gray-800">
                         <div className="flex justify-between items-center mb-8">
-                            <span className="text-xs font-semibold tracking-wider text-gray-500 uppercase">Route Optimization</span>
-                            <span className="text-xs px-2 py-1 rounded bg-green-500/20 text-green-400">Active</span>
+                            <span className="text-xs font-semibold tracking-wider text-gray-500 uppercase">{t('Route Optimization')}</span>
+                            <span className="text-xs px-2 py-1 rounded bg-green-500/20 text-green-400">{t('Active')}</span>
                         </div>
 
                         {/* Flow Diagram */}
@@ -64,7 +67,7 @@ export const SmartRouter: React.FC = () => {
                                 <div className="w-16 h-16 rounded-2xl bg-[#1C1E21] border border-gray-700 flex items-center justify-center shadow-lg relative z-10 group hover:border-celo-green transition-colors">
                                     <span className="font-bold text-white">cUSD</span>
                                 </div>
-                                <span className="text-sm text-gray-400">Stablecoin</span>
+                                <span className="text-sm text-gray-400">{t('Stablecoin')}</span>
                             </div>
 
                              {/* Step 1 */}
@@ -96,7 +99,7 @@ export const SmartRouter: React.FC = () => {
                                 <div className="w-16 h-16 rounded-2xl bg-[#1C1E21] border border-gray-700 flex items-center justify-center shadow-lg relative z-10 hover:border-celo-green transition-colors">
                                     <span className="font-bold text-celo-green">cKES</span>
                                 </div>
-                                <span className="text-sm text-gray-400">Local</span>
+                                <span className="text-sm text-gray-400">{t('Local')}</span>
                             </div>
 
                         </div>
@@ -104,8 +107,8 @@ export const SmartRouter: React.FC = () => {
                         <div className="mt-6 p-4 rounded-xl bg-gray-800/50 border border-gray-700 flex items-start gap-3">
                              <ShieldCheck className="w-5 h-5 text-celo-green shrink-0 mt-0.5" />
                              <div className="text-sm">
-                                <p className="text-white font-medium">TEE Verification Complete</p>
-                                <p className="text-gray-500">Key management is handled inside a secure enclave. You never touch a private key.</p>
+                                <p className="text-white font-medium">{t('TEE Verification Complete')}</p>
+                                <p className="text-gray-500">{t('Key management is handled inside a secure enclave. You never touch a private key.')}</p>
                              </div>
                         </div>
                     </div>

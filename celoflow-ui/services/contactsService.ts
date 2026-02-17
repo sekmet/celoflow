@@ -1,34 +1,116 @@
+import { createRxDatabase } from 'rxdb/plugins/core';
+import { getRxStorageDexie } from 'rxdb/plugins/storage-dexie';
+import type { RxCollection, RxDatabase, RxJsonSchema } from 'rxdb';
 import { Contact } from '../types';
 
-const STORAGE_KEY = 'celoflow_contacts';
+interface ContactsCollections {
+  contacts: RxCollection<Contact>;
+}
+
+const DATABASE_NAME = 'celoflow_contacts_db';
+const COLLECTION_NAME = 'contacts';
+
+const contactSchema: RxJsonSchema<Contact> = {
+  title: 'celoflow contacts schema',
+  description: 'Stores user contacts for CeloFlow UI',
+  version: 0,
+  keyCompression: false,
+  primaryKey: 'id',
+  type: 'object',
+  properties: {
+    id: { type: 'string', maxLength: 128 },
+    name: { type: 'string' },
+    address: { type: 'string' },
+    network: { type: 'string' },
+    city: { type: 'string' },
+    country: { type: 'string' },
+    avatar: { type: 'string' },
+    phone: { type: 'string' },
+    email: { type: 'string' },
+    notes: { type: 'string' },
+    favorite: { type: 'boolean' },
+    blocked: { type: 'boolean' },
+    group: { type: 'string' },
+    createdAt: { type: 'string' },
+    updatedAt: { type: 'string' },
+  },
+  required: [
+    'id',
+    'name',
+    'address',
+    'network',
+    'city',
+    'country',
+    'avatar',
+    'phone',
+    'email',
+    'notes',
+    'favorite',
+    'blocked',
+    'group',
+    'createdAt',
+    'updatedAt',
+  ],
+  indexes: ['name', 'address', 'country', 'createdAt', 'group'],
+};
+
+let databasePromise: Promise<RxDatabase<ContactsCollections>> | null = null;
+let collectionPromise: Promise<RxCollection<Contact>> | null = null;
 
 function generateId(): string {
   return `contact_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 }
 
-function loadContacts(): Contact[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? JSON.parse(raw) : [];
-  } catch {
-    return [];
+async function getDatabase(): Promise<RxDatabase<ContactsCollections>> {
+  if (!databasePromise) {
+    databasePromise = createRxDatabase<ContactsCollections>({
+      name: DATABASE_NAME,
+      storage: getRxStorageDexie(),
+      multiInstance: false,
+      ignoreDuplicate: true,
+    });
   }
+
+  return databasePromise;
 }
 
-function saveContacts(contacts: Contact[]): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(contacts));
+async function getContactsCollection(): Promise<RxCollection<Contact>> {
+  if (!collectionPromise) {
+    collectionPromise = (async () => {
+      const db = await getDatabase();
+      if (db.collections[COLLECTION_NAME]) return db.collections[COLLECTION_NAME] as RxCollection<Contact>;
+
+      await db.addCollections({
+        contacts: {
+          schema: contactSchema,
+        },
+      });
+
+      return db.collections[COLLECTION_NAME] as RxCollection<Contact>;
+    })();
+  }
+
+  return collectionPromise;
 }
 
-export function getContacts(): Contact[] {
-  return loadContacts();
+async function getContactDocument(id: string) {
+  const collection = await getContactsCollection();
+  return collection.findOne(id).exec();
 }
 
-export function getContact(id: string): Contact | undefined {
-  return loadContacts().find((c) => c.id === id);
+export async function getContacts(): Promise<Contact[]> {
+  const collection = await getContactsCollection();
+  const documents = await collection.find().exec();
+  return documents.map((document) => document.toJSON());
 }
 
-export function createContact(data: Omit<Contact, 'id' | 'createdAt' | 'updatedAt'>): Contact {
-  const contacts = loadContacts();
+export async function getContact(id: string): Promise<Contact | undefined> {
+  const document = await getContactDocument(id);
+  return document ? document.toJSON() : undefined;
+}
+
+export async function createContact(data: Omit<Contact, 'id' | 'createdAt' | 'updatedAt'>): Promise<Contact> {
+  const collection = await getContactsCollection();
   const now = new Date().toISOString();
   const contact: Contact = {
     ...data,
@@ -36,64 +118,63 @@ export function createContact(data: Omit<Contact, 'id' | 'createdAt' | 'updatedA
     createdAt: now,
     updatedAt: now,
   };
-  contacts.push(contact);
-  saveContacts(contacts);
+
+  await collection.insert(contact);
   return contact;
 }
 
-export function updateContact(id: string, data: Partial<Omit<Contact, 'id' | 'createdAt'>>): Contact | null {
-  const contacts = loadContacts();
-  const idx = contacts.findIndex((c) => c.id === id);
-  if (idx === -1) return null;
-  contacts[idx] = {
-    ...contacts[idx],
+export async function updateContact(
+  id: string,
+  data: Partial<Omit<Contact, 'id' | 'createdAt'>>,
+): Promise<Contact | null> {
+  const collection = await getContactsCollection();
+  const current = await getContactDocument(id);
+  if (!current) return null;
+
+  const updated: Contact = {
+    ...current.toJSON(),
     ...data,
     updatedAt: new Date().toISOString(),
   };
-  saveContacts(contacts);
-  return contacts[idx];
+
+  await collection.upsert(updated);
+  return updated;
 }
 
-export function deleteContact(id: string): boolean {
-  const contacts = loadContacts();
-  const filtered = contacts.filter((c) => c.id !== id);
-  if (filtered.length === contacts.length) return false;
-  saveContacts(filtered);
+export async function deleteContact(id: string): Promise<boolean> {
+  const document = await getContactDocument(id);
+  if (!document) return false;
+
+  await document.remove();
   return true;
 }
 
-export function toggleFavorite(id: string): Contact | null {
-  const contacts = loadContacts();
-  const idx = contacts.findIndex((c) => c.id === id);
-  if (idx === -1) return null;
-  contacts[idx].favorite = !contacts[idx].favorite;
-  contacts[idx].updatedAt = new Date().toISOString();
-  saveContacts(contacts);
-  return contacts[idx];
+export async function toggleFavorite(id: string): Promise<Contact | null> {
+  const contact = await getContact(id);
+  if (!contact) return null;
+
+  return updateContact(id, { favorite: !contact.favorite });
 }
 
-export function toggleBlocked(id: string): Contact | null {
-  const contacts = loadContacts();
-  const idx = contacts.findIndex((c) => c.id === id);
-  if (idx === -1) return null;
-  contacts[idx].blocked = !contacts[idx].blocked;
-  contacts[idx].updatedAt = new Date().toISOString();
-  saveContacts(contacts);
-  return contacts[idx];
+export async function toggleBlocked(id: string): Promise<Contact | null> {
+  const contact = await getContact(id);
+  if (!contact) return null;
+
+  return updateContact(id, { blocked: !contact.blocked });
 }
 
 export type SortField = 'name' | 'address' | 'country' | 'createdAt';
 export type SortDirection = 'asc' | 'desc';
 export type FilterMode = 'all' | 'favorites' | 'blocked';
 
-export function searchContacts(
+export async function searchContacts(
   query: string,
   filter: FilterMode = 'all',
   sortBy: SortField = 'name',
   sortDir: SortDirection = 'asc',
   group?: string,
-): Contact[] {
-  let contacts = loadContacts();
+): Promise<Contact[]> {
+  let contacts = await getContacts();
   const q = query.toLowerCase().trim();
 
   if (q) {
@@ -126,15 +207,17 @@ export function exportContacts(contacts: Contact[]): string {
   return JSON.stringify(contacts, null, 2);
 }
 
-export function importContacts(jsonString: string): { imported: number; errors: number } {
+export async function importContacts(jsonString: string): Promise<{ imported: number; errors: number }> {
   try {
     const parsed = JSON.parse(jsonString);
     if (!Array.isArray(parsed)) return { imported: 0, errors: 1 };
 
-    const existing = loadContacts();
+    const existing = await getContacts();
     const existingAddresses = new Set(existing.map((c) => c.address.toLowerCase()));
     let imported = 0;
     let errors = 0;
+
+    const contactsToInsert: Contact[] = [];
 
     for (const item of parsed) {
       if (!item.name || !item.address) {
@@ -145,8 +228,10 @@ export function importContacts(jsonString: string): { imported: number; errors: 
         errors++;
         continue;
       }
+
+      existingAddresses.add(item.address.toLowerCase());
       const now = new Date().toISOString();
-      existing.push({
+      contactsToInsert.push({
         id: generateId(),
         name: item.name || '',
         address: item.address || '',
@@ -166,15 +251,19 @@ export function importContacts(jsonString: string): { imported: number; errors: 
       imported++;
     }
 
-    saveContacts(existing);
+    if (contactsToInsert.length > 0) {
+      const collection = await getContactsCollection();
+      await collection.bulkInsert(contactsToInsert);
+    }
+
     return { imported, errors };
   } catch {
     return { imported: 0, errors: 1 };
   }
 }
 
-export function getGroups(): string[] {
-  const contacts = loadContacts();
+export async function getGroups(): Promise<string[]> {
+  const contacts = await getContacts();
   const groups = new Set(contacts.map((c) => c.group).filter(Boolean));
   return Array.from(groups).sort();
 }

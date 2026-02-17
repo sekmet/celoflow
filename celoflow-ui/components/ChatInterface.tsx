@@ -5,18 +5,71 @@ import { streamChat, type ChatMessage as CeloflowMessage } from '../lib/celoflow
 import { getExchangeRate } from '../services/currencyService';
 import { Message, TransactionIntent, TransactionHistoryItem } from '../types';
 import { SUGGESTED_PROMPTS, SUPPORTED_CURRENCIES } from '../constants';
+import { useI18n } from '../lib/language';
 
 interface ChatInterfaceProps {
   className?: string;
   fullScreen?: boolean;
 }
 
+interface SpeechRecognitionResultItem {
+  transcript: string;
+}
+
+interface SpeechRecognitionResultEventLike {
+  results: ArrayLike<ArrayLike<SpeechRecognitionResultItem>>;
+}
+
+interface SpeechRecognitionErrorEventLike {
+  error?: string;
+}
+
+interface SpeechRecognitionLike {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  onstart: (() => void) | null;
+  onend: (() => void) | null;
+  onerror: ((event: SpeechRecognitionErrorEventLike) => void) | null;
+  onresult: ((event: SpeechRecognitionResultEventLike) => void) | null;
+  start: () => void;
+  stop: () => void;
+}
+
+type SpeechRecognitionConstructor = new () => SpeechRecognitionLike;
+
+function getSpeechRecognitionConstructor(): SpeechRecognitionConstructor | null {
+  if (typeof window === 'undefined') return null;
+
+  const speechWindow = window as Window & {
+    SpeechRecognition?: unknown;
+    webkitSpeechRecognition?: unknown;
+  };
+
+  const ctor = speechWindow.SpeechRecognition ?? speechWindow.webkitSpeechRecognition;
+  if (typeof ctor !== 'function') return null;
+
+  return ctor as SpeechRecognitionConstructor;
+}
+
+function isAbortError(error: unknown): boolean {
+  if (error instanceof DOMException) return error.name === 'AbortError';
+
+  if (typeof error === 'object' && error !== null && 'name' in error) {
+    const namedError = error as { name?: string };
+    return namedError.name === 'AbortError';
+  }
+
+  return false;
+}
+
 export const ChatInterface: React.FC<ChatInterfaceProps> = ({ className = '', fullScreen = false }) => {
+  const { t } = useI18n();
   const [messages, setMessages] = useState<Message[]>([
     {
       id: '1',
       role: 'assistant',
-      content: 'Hi! I\'m CeloFlow. I can help you send money globally using the Celo blockchain. Where would you like to send money today?',
+      content: t('Hi! I\'m CeloFlow. I can help you send money globally using the Celo blockchain. Where would you like to send money today?'),
       type: 'text'
     }
   ]);
@@ -34,7 +87,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ className = '', fu
   const [expandedFees, setExpandedFees] = useState<string | null>(null);
 
   const scrollRef = useRef<HTMLDivElement>(null);
-  const recognitionRef = useRef<any>(null);
+  const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -56,9 +109,8 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ className = '', fu
 
   // Initialize Speech Recognition
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-        const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-        if (SpeechRecognition) {
+    const SpeechRecognition = getSpeechRecognitionConstructor();
+    if (SpeechRecognition) {
             recognitionRef.current = new SpeechRecognition();
             recognitionRef.current.continuous = false;
             recognitionRef.current.interimResults = false;
@@ -66,19 +118,19 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ className = '', fu
 
             recognitionRef.current.onstart = () => setIsListening(true);
             recognitionRef.current.onend = () => setIsListening(false);
-            recognitionRef.current.onerror = (event: any) => {
+            recognitionRef.current.onerror = (event: SpeechRecognitionErrorEventLike) => {
                 console.error('Speech recognition error', event.error);
                 setIsListening(false);
             };
             
-            recognitionRef.current.onresult = (event: any) => {
-                const transcript = event.results[0][0].transcript;
+            recognitionRef.current.onresult = (event: SpeechRecognitionResultEventLike) => {
+                const transcript = event.results[0]?.[0]?.transcript || '';
+                if (!transcript) return;
                 setInput(prev => {
                     const spacer = prev.length > 0 && !prev.endsWith(' ') ? ' ' : '';
                     return prev + spacer + transcript;
                 });
             };
-        }
     }
   }, []);
 
@@ -116,7 +168,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ className = '', fu
 
   const toggleListening = () => {
     if (!recognitionRef.current) {
-        alert("Voice input is not supported in this browser. Please use Chrome, Edge, or Safari.");
+        alert(t('Voice input is not supported in this browser. Please use Chrome, Edge, or Safari.'));
         return;
     }
     if (isListening) {
@@ -191,8 +243,8 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ className = '', fu
           );
         },
       });
-    } catch (error: any) {
-      if (error.name !== 'AbortError') {
+    } catch (error: unknown) {
+      if (!isAbortError(error)) {
         console.error('Stream error:', error);
         setMessages(prev =>
           prev.map(m =>
@@ -201,7 +253,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ className = '', fu
                   ...m,
                   content:
                     m.content ||
-                    'Sorry, I encountered an error connecting to the server. Please try again.',
+                    t('Sorry, I encountered an error connecting to the server. Please try again.'),
                 }
               : m,
           ),
@@ -314,7 +366,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ className = '', fu
   };
 
   const handleCancelTransaction = (historyId: string) => {
-      if (window.confirm("Are you sure you want to cancel this scheduled payment?")) {
+      if (window.confirm(t('Are you sure you want to cancel this scheduled payment?'))) {
           setHistory(prev => prev.map(item => 
               item.id === historyId ? { ...item, status: 'cancelled' } : item
           ));
@@ -326,8 +378,12 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ className = '', fu
       if (!data) return;
 
       const shareData = {
-          title: 'CeloFlow Transaction',
-          text: `I just sent ${data.amount} ${data.currency} to ${data.recipient} via CeloFlow!`,
+          title: t('CeloFlow Transaction'),
+          text: t('I just sent {{amount}} {{currency}} to {{recipient}} via CeloFlow!', {
+            amount: data.amount,
+            currency: data.currency,
+            recipient: data.recipient,
+          }),
           url: window.location.href
       };
 
@@ -336,7 +392,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ className = '', fu
               await navigator.share(shareData);
           } else {
               await navigator.clipboard.writeText(shareData.text);
-              alert("Transaction details copied to clipboard!");
+              alert(t('Transaction details copied to clipboard!'));
           }
       } catch (err) {
           console.error("Error sharing:", err);
@@ -353,23 +409,23 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ className = '', fu
       switch(status) {
           case 'completed': return {
               class: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400',
-              tooltip: 'Funds have successfully reached the recipient.'
+              tooltip: t('Funds have successfully reached the recipient.')
           };
           case 'processing': return {
               class: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400',
-              tooltip: 'Transaction is currently being confirmed on the blockchain.'
+              tooltip: t('Transaction is currently being confirmed on the blockchain.')
           };
           case 'scheduled': return {
               class: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
-              tooltip: 'Payment is set to execute at a future date.'
+              tooltip: t('Payment is set to execute at a future date.')
           };
           case 'cancelled': return {
               class: 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-400',
-              tooltip: 'This transaction was cancelled by the user.'
+              tooltip: t('This transaction was cancelled by the user.')
           };
           case 'failed': return {
               class: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
-              tooltip: 'Transaction could not be completed. Please try again.'
+              tooltip: t('Transaction could not be completed. Please try again.')
           };
           default: return { class: 'bg-gray-100 text-gray-700', tooltip: '' };
       }
@@ -391,7 +447,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ className = '', fu
                     <h3 className="font-bold text-gray-900 dark:text-white">CeloFlow</h3>
                     <div className="flex items-center gap-1.5">
                         <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-                        <span className="text-xs text-gray-500 dark:text-gray-400 font-medium">Online</span>
+                        <span className="text-xs text-gray-500 dark:text-gray-400 font-medium">{t('Online')}</span>
                     </div>
                 </div>
             </div>
@@ -399,7 +455,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ className = '', fu
                 <button 
                     onClick={() => setShowHistory(!showHistory)}
                     className={`p-2 rounded-full transition-colors ${showHistory ? 'bg-celo-green text-white' : 'hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-400'}`}
-                    title="Transaction History"
+                    title={t('Transaction History')}
                 >
                     <History className="w-4 h-4" />
                 </button>
@@ -413,7 +469,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ className = '', fu
         {showHistory && (
             <div className="absolute inset-0 top-[73px] bg-white dark:bg-gray-800 z-20 overflow-y-auto p-4 animate-fade-in-up">
                 <div className="flex justify-between items-center mb-4">
-                    <h3 className="font-bold text-lg text-gray-900 dark:text-white">Recent Activity</h3>
+                    <h3 className="font-bold text-lg text-gray-900 dark:text-white">{t('Recent Activity')}</h3>
                     <button onClick={() => setShowHistory(false)} className="p-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-full">
                         <X className="w-5 h-5 text-gray-500" />
                     </button>
@@ -423,7 +479,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ className = '', fu
                     <Search className="absolute left-3 top-2.5 w-4 h-4 text-gray-400" />
                     <input
                         type="text"
-                        placeholder="Search recipient or currency..."
+                        placeholder={t('Search recipient or currency...')}
                         value={historySearch}
                         onChange={(e) => setHistorySearch(e.target.value)}
                         className="w-full pl-9 pr-4 py-2 bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-white rounded-lg text-sm outline-none focus:ring-2 focus:ring-celo-green placeholder-gray-500 dark:placeholder-gray-400"
@@ -432,7 +488,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ className = '', fu
 
                 {filteredHistory.length === 0 ? (
                     <div className="text-center text-gray-400 mt-10">
-                        {history.length === 0 ? "No transactions yet." : "No matching transactions."}
+                        {history.length === 0 ? t('No transactions yet.') : t('No matching transactions.')}
                     </div>
                 ) : (
                     <div className="space-y-3">
@@ -452,7 +508,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ className = '', fu
                                                 <button 
                                                     onClick={() => handleCancelTransaction(item.id)}
                                                     className="p-1.5 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-full transition-colors"
-                                                    title="Cancel Scheduled Payment"
+                                                    title={t('Cancel Scheduled Payment')}
                                                 >
                                                     <Ban className="w-4 h-4" />
                                                 </button>
@@ -460,7 +516,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ className = '', fu
                                             <div className="relative group">
                                                 <div className={`px-2 py-1 rounded text-[10px] font-bold uppercase flex items-center gap-1 cursor-help ${statusConfig.class}`}>
                                                     {item.status === 'processing' && <Loader2 className="w-3 h-3 animate-spin" />}
-                                                    {item.status}
+                                                    {t(item.status)}
                                                 </div>
                                                 {/* Tooltip */}
                                                 <div className="absolute bottom-full right-0 mb-2 hidden group-hover:block w-48 bg-gray-900 text-white text-xs p-2 rounded shadow-lg z-50">
@@ -473,11 +529,11 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ className = '', fu
                                     
                                     <div className="flex flex-col gap-1 mt-3 pt-3 border-t border-gray-100 dark:border-gray-600/50">
                                         <div className="flex justify-between text-sm">
-                                            <span className="text-gray-500 text-xs uppercase tracking-wider">Sent</span>
+                                            <span className="text-gray-500 text-xs uppercase tracking-wider">{t('Sent')}</span>
                                             <span className="font-medium text-gray-900 dark:text-white">{item.intent.amount} {item.intent.currency}</span>
                                         </div>
                                         <div className="flex justify-between text-sm">
-                                            <span className="text-gray-500 text-xs uppercase tracking-wider">Received</span>
+                                            <span className="text-gray-500 text-xs uppercase tracking-wider">{t('Received')}</span>
                                             <span className="font-bold text-celo-green">{item.intent.convertedAmount} {item.intent.recipientCurrency}</span>
                                         </div>
                                     </div>
@@ -485,7 +541,10 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ className = '', fu
                                     {item.intent.frequency && item.intent.frequency !== 'one-time' && (
                                          <div className="mt-3 text-xs text-blue-600 dark:text-blue-400 flex items-center gap-1 bg-blue-50 dark:bg-blue-900/20 p-2 rounded-lg">
                                              <CalendarClock className="w-3 h-3" />
-                                             {item.intent.frequency} starting {item.intent.startDate}
+                                             {t('{{frequency}} starting {{startDate}}', {
+                                               frequency: item.intent.frequency,
+                                               startDate: item.intent.startDate || '',
+                                             })}
                                          </div>
                                     )}
                                 </div>
@@ -520,17 +579,17 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ className = '', fu
                                 <div className="p-4 border-b border-gray-50 dark:border-gray-600 bg-gray-50/50 dark:bg-gray-800/30">
                                     <div className="text-sm text-gray-600 dark:text-gray-300 mb-1"><MarkdownContent content={msg.content} /></div>
                                     <div className="flex items-center justify-between mt-3">
-                                        <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Best Quote Found</span>
+                                        <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">{t('Best Quote Found')}</span>
                                         <div className="bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 px-2 py-0.5 rounded text-[10px] font-bold flex items-center gap-1">
                                             <CheckCircle2 className="w-3 h-3" />
-                                            Saved ${msg.transactionData.savings.toFixed(2)}
+                                            {t('Saved ${{amount}}', { amount: msg.transactionData.savings.toFixed(2) })}
                                         </div>
                                     </div>
                                 </div>
                                 <div className="p-5 space-y-4">
                                     <div className="flex justify-between items-center">
                                         <div className="flex-1">
-                                            <p className="text-xs text-gray-400 mb-1">You Send</p>
+                                            <p className="text-xs text-gray-400 mb-1">{t('You Send')}</p>
                                             <div className="flex flex-col">
                                                 <div className="flex items-baseline gap-2">
                                                     <span className="text-xl font-bold text-gray-900 dark:text-white">{msg.transactionData.amount}</span>
@@ -556,7 +615,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ className = '', fu
                                         </div>
                                         
                                         <div className="text-right flex-1">
-                                            <p className="text-xs text-gray-400 mb-1">{msg.transactionData.recipient} Receives</p>
+                                            <p className="text-xs text-gray-400 mb-1">{msg.transactionData.recipient} {t('Receives')}</p>
                                             <div className="flex flex-col items-end">
                                                 <div className="flex items-baseline gap-2 justify-end">
                                                     <span className="text-xl font-bold text-celo-green">
@@ -587,14 +646,14 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ className = '', fu
                                                 <div className="relative group">
                                                     <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse block"></span>
                                                     <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block w-32 bg-gray-900 text-white text-[10px] p-1.5 rounded text-center z-10">
-                                                        Live Real-time Rate
+                                                        {t('Live Real-time Rate')}
                                                     </div>
                                                 </div>
                                             ) : (
                                                 <div className="relative group">
                                                     <AlertCircle className="w-3 h-3 text-yellow-500" />
                                                     <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block w-32 bg-gray-900 text-white text-[10px] p-1.5 rounded text-center z-10">
-                                                        Estimated Fallback Rate
+                                                        {t('Estimated Fallback Rate')}
                                                     </div>
                                                 </div>
                                             )
@@ -609,7 +668,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ className = '', fu
                                     <div className="bg-gray-50 dark:bg-gray-800/50 p-3 rounded-xl border border-gray-100 dark:border-gray-700 space-y-3">
                                         <label className="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider flex items-center gap-1">
                                             <CalendarClock className="w-3 h-3" />
-                                            Payment Schedule
+                                            {t('Payment Schedule')}
                                         </label>
                                         <div className="grid grid-cols-2 gap-2">
                                             <select
@@ -617,10 +676,10 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ className = '', fu
                                                 onChange={(e) => updateTransactionData(msg.id, { frequency: e.target.value })}
                                                 className="bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 text-gray-900 dark:text-white text-sm rounded-lg block w-full p-2 outline-none focus:ring-1 focus:ring-celo-green"
                                             >
-                                                <option value="one-time">One-time</option>
-                                                <option value="daily">Daily</option>
-                                                <option value="weekly">Weekly</option>
-                                                <option value="monthly">Monthly</option>
+                                                <option value="one-time">{t('One-time')}</option>
+                                                <option value="daily">{t('Daily')}</option>
+                                                <option value="weekly">{t('Weekly')}</option>
+                                                <option value="monthly">{t('Monthly')}</option>
                                             </select>
                                             
                                             <input
@@ -636,9 +695,9 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ className = '', fu
                                     {/* Detailed Breakdown with Expandable Fees */}
                                     <div className="space-y-2 text-xs text-gray-500 dark:text-gray-400 pt-2 border-t border-gray-100 dark:border-gray-600">
                                         <div className="flex justify-between">
-                                            <span>Mento Protocol Status</span>
+                                            <span>{t('Mento Protocol Status')}</span>
                                             <span className="text-green-600 dark:text-green-400 font-medium flex items-center gap-1">
-                                                <Zap className="w-3 h-3" /> Optimal
+                                                <Zap className="w-3 h-3" /> {t('Optimal')}
                                             </span>
                                         </div>
                                         
@@ -648,7 +707,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ className = '', fu
                                                 onClick={() => setExpandedFees(expandedFees === msg.id ? null : msg.id)}
                                             >
                                                 <div className="flex items-center gap-1">
-                                                    <span>Total Network Fees</span>
+                                                    <span>{t('Total Network Fees')}</span>
                                                     <Info className="w-3 h-3" />
                                                 </div>
                                                 <div className="flex items-center gap-1">
@@ -660,15 +719,15 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ className = '', fu
                                             {expandedFees === msg.id && msg.transactionData.feeBreakdown && (
                                                 <div className="mt-2 pl-2 border-l-2 border-gray-200 dark:border-gray-600 space-y-1 animate-fade-in-up">
                                                     <div className="flex justify-between text-[10px]">
-                                                        <span>Mento Swap Fee</span>
+                                                        <span>{t('Mento Swap Fee')}</span>
                                                         <span>${msg.transactionData.feeBreakdown.mentoFee}</span>
                                                     </div>
                                                     <div className="flex justify-between text-[10px]">
-                                                        <span>Celo Gas Fee</span>
+                                                        <span>{t('Celo Gas Fee')}</span>
                                                         <span>${msg.transactionData.feeBreakdown.networkFee}</span>
                                                     </div>
                                                     <div className="flex justify-between text-[10px]">
-                                                        <span>Secure Enclave (TEE)</span>
+                                                        <span>{t('Secure Enclave (TEE)')}</span>
                                                         <span>${msg.transactionData.feeBreakdown.securityFee}</span>
                                                     </div>
                                                 </div>
@@ -676,9 +735,9 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ className = '', fu
                                         </div>
 
                                         <div className="flex justify-between">
-                                            <span>Est. Arrival</span>
+                                            <span>{t('Est. Arrival')}</span>
                                             <span className="font-medium text-gray-700 dark:text-gray-300">
-                                                {msg.transactionData.frequency === 'one-time' ? '< 5 seconds' : 'Scheduled'}
+                                                {msg.transactionData.frequency === 'one-time' ? t('< 5 seconds') : t('Scheduled')}
                                             </span>
                                         </div>
                                     </div>
@@ -687,7 +746,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ className = '', fu
                                         onClick={() => handleConfirm(msg.id)}
                                         className="w-full py-3 bg-celo-green hover:bg-green-500 text-white font-bold rounded-xl transition-all active:scale-95 shadow-lg shadow-green-500/20"
                                     >
-                                        {msg.transactionData.frequency && msg.transactionData.frequency !== 'one-time' ? 'Schedule Payment' : 'Confirm Transfer'}
+                                        {msg.transactionData.frequency && msg.transactionData.frequency !== 'one-time' ? t('Schedule Payment') : t('Confirm Transfer')}
                                     </button>
                                 </div>
                             </div>
@@ -700,26 +759,35 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ className = '', fu
                                     <CheckCircle2 className="w-6 h-6" />
                                 </div>
                                 <h4 className="text-green-900 dark:text-green-400 font-bold text-lg">
-                                    {msg.transactionData?.frequency && msg.transactionData.frequency !== 'one-time' ? 'Payment Scheduled!' : 'Transaction Sent!'}
+                                    {msg.transactionData?.frequency && msg.transactionData.frequency !== 'one-time' ? t('Payment Scheduled!') : t('Transaction Sent!')}
                                 </h4>
                                 <p className="text-green-700 dark:text-green-300 text-sm mt-1">
-                                    {msg.transactionData?.convertedAmount} {msg.transactionData?.recipientCurrency} 
-                                    {msg.transactionData?.frequency && msg.transactionData.frequency !== 'one-time' 
-                                        ? ` will be sent to ${msg.transactionData?.recipient} ${msg.transactionData.frequency} starting ${msg.transactionData.startDate}.`
-                                        : ` is on its way to ${msg.transactionData?.recipient}.`
+                                    {msg.transactionData?.frequency && msg.transactionData.frequency !== 'one-time'
+                                        ? t('{{amount}} {{currency}} will be sent to {{recipient}} {{frequency}} starting {{startDate}}.', {
+                                            amount: msg.transactionData?.convertedAmount || '',
+                                            currency: msg.transactionData?.recipientCurrency || '',
+                                            recipient: msg.transactionData?.recipient || '',
+                                            frequency: msg.transactionData?.frequency || '',
+                                            startDate: msg.transactionData?.startDate || '',
+                                          })
+                                        : t('{{amount}} {{currency}} is on its way to {{recipient}}.', {
+                                            amount: msg.transactionData?.convertedAmount || '',
+                                            currency: msg.transactionData?.recipientCurrency || '',
+                                            recipient: msg.transactionData?.recipient || '',
+                                          })
                                     }
                                 </p>
                                 
                                 <div className="flex gap-2 mt-4 w-full">
                                     <a href="#" className="flex-1 py-2 text-xs font-bold text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 border border-gray-200 dark:border-gray-700 rounded-lg flex items-center justify-center bg-white dark:bg-gray-800">
-                                        View on CeloScan
+                                        {t('View on CeloScan')}
                                     </a>
                                     <button 
                                         onClick={() => handleShare(msg)}
                                         className="flex-1 py-2 text-xs font-bold text-green-700 hover:text-green-800 dark:text-green-400 dark:hover:text-green-300 border border-green-200 dark:border-green-800 rounded-lg flex items-center justify-center gap-1 bg-green-50 dark:bg-green-900/20"
                                     >
                                         <Share2 className="w-3 h-3" />
-                                        Share
+                                        {t('Share')}
                                     </button>
                                 </div>
                              </div>
@@ -730,7 +798,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ className = '', fu
             {isLoading && (
                  <div className="flex items-center gap-2 text-gray-400 text-sm pl-2 animate-pulse">
                     <Loader2 className="w-4 h-4 animate-spin" />
-                    <span>Processing request...</span>
+                    <span>{t('Processing request...')}</span>
                  </div>
             )}
         </div>
@@ -745,7 +813,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ className = '', fu
                             onClick={() => handleSend(prompt)}
                             className="whitespace-nowrap px-3 py-1.5 bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg text-xs text-gray-600 dark:text-gray-300 hover:border-celo-green hover:text-celo-green transition-colors"
                         >
-                            {prompt}
+                            {t(prompt)}
                         </button>
                     ))}
                 </div>
@@ -754,7 +822,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ className = '', fu
                 <button
                     onClick={toggleListening}
                     className={`p-2 rounded-lg transition-all ${isListening ? 'bg-red-500 text-white animate-pulse' : 'text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600'}`}
-                    title="Speak to CeloFlow"
+                    title={t('Speak to CeloFlow')}
                 >
                     <Mic className="w-4 h-4" />
                 </button>
@@ -763,7 +831,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ className = '', fu
                     value={input}
                     onChange={(e) => setInput(e.target.value)}
                     onKeyDown={(e) => e.key === 'Enter' && handleSend()}
-                    placeholder={isListening ? "Listening..." : "Type a command..."}
+                    placeholder={isListening ? t('Listening...') : t('Type a command...')}
                     className="flex-1 bg-transparent border-none outline-none text-gray-800 dark:text-white placeholder-gray-400 text-sm px-2"
                     disabled={isLoading}
                 />
