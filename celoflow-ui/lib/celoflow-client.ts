@@ -42,13 +42,37 @@ export interface ChatMessage {
   content: string
 }
 
+export interface WalletContext {
+  wallet_address?: string
+  connected: boolean
+  chain_id?: number
+  balances: Record<string, string>
+}
+
 /** Callback receives full accumulated content + the latest delta */
 export type OnStreamContentCallback = (fullContent: string, delta: string) => void
+
+export interface ContactData {
+  id: string
+  name: string
+  address: string
+  network: string
+  city: string
+  country: string
+  phone: string
+  email: string
+  notes: string
+  favorite: boolean
+  blocked: boolean
+  group: string
+}
 
 export interface StreamChatOptions {
   messages: ChatMessage[]
   conversation_id?: string
   baseUrl?: string
+  walletContext?: WalletContext
+  contacts?: ContactData[]
   onContent?: OnStreamContentCallback
   onComplete?: (fullContent: string) => void
   onError?: (error: Error) => void
@@ -59,6 +83,8 @@ export interface SendChatOptions {
   messages: ChatMessage[]
   conversation_id?: string
   baseUrl?: string
+  walletContext?: WalletContext
+  contacts?: ContactData[]
   signal?: AbortSignal
 }
 
@@ -80,6 +106,8 @@ export async function streamChat(options: StreamChatOptions): Promise<string> {
     messages,
     conversation_id,
     baseUrl,
+    walletContext,
+    contacts,
     onContent,
     onComplete,
     onError,
@@ -89,13 +117,21 @@ export async function streamChat(options: StreamChatOptions): Promise<string> {
   const endpointBase = getBaseUrl(baseUrl)
 
   try {
+    // Prepare request body with wallet context and contacts
+    const requestBody = {
+      messages,
+      conversation_id,
+      ...(walletContext && { wallet_context: walletContext }),
+      ...(contacts && contacts.length > 0 && { contacts }),
+    }
+
     const response = await fetch(`${endpointBase}/chat/stream`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Accept: 'text/event-stream',
       },
-      body: JSON.stringify({ messages, conversation_id }),
+      body: JSON.stringify(requestBody),
       signal,
     })
 
@@ -201,13 +237,21 @@ export async function streamChat(options: StreamChatOptions): Promise<string> {
  * Uses `POST /chat` and returns the full response content.
  */
 export async function sendChat(options: SendChatOptions): Promise<string> {
-  const { messages, conversation_id, baseUrl, signal } = options
+  const { messages, conversation_id, baseUrl, walletContext, contacts, signal } = options
   const endpointBase = getBaseUrl(baseUrl)
+
+  // Prepare request body with wallet context and contacts
+  const requestBody = {
+    messages,
+    conversation_id,
+    ...(walletContext && { wallet_context: walletContext }),
+    ...(contacts && contacts.length > 0 && { contacts }),
+  }
 
   const response = await fetch(`${endpointBase}/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ messages, conversation_id }),
+    body: JSON.stringify(requestBody),
     signal,
   })
 

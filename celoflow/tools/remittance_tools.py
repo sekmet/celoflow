@@ -307,11 +307,34 @@ async def get_wallet_balance(wallet_address: str) -> str:
             "cUSD": "0.0",
             "cEUR": "0.0",
             "cKES": "0.0",
-            "USDC": "0.0",
-        },
-        "note": "Connect to RPC to fetch live balances",
+            "PHPm": "0.0",
+            "XOFm": "0.0",
+            "BRLm": "0.0",
+            "COPm": "0.0",
+            "ZARm": "0.0",
+            "NGNm": "0.0",
+            "USDT": "0.0",
+            "axlUSDC": "0.0"
+        }
     })
 
+@function_tool
+async def get_current_wallet_context() -> str:
+    """Get the current wallet context including connection state and balances.
+
+    Returns:
+        Current wallet context as JSON string
+    """
+    import json
+    from services.wallet_context_service import wallet_context_service
+    
+    context = wallet_context_service.get_wallet_context()
+    return json.dumps({
+        "wallet_address": context.wallet_address,
+        "connected": context.connected,
+        "chain_id": context.chain_id,
+        "balances": context.balances
+    })
 
 # ═══════════════════════════════════════════════════════════════════
 # Tool: compare_fees_with_providers

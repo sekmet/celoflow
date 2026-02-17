@@ -55,3 +55,60 @@ export interface Contact {
   createdAt: string;
   updatedAt: string;
 }
+
+// Multi-token wallet balance interfaces
+export interface TokenBalance {
+  symbol: string;
+  name: string;
+  balance: bigint;
+  decimals: number;
+  formattedBalance: string;
+  usdValue?: number;
+  change24h?: number;
+  contractAddress: string;
+  category: 'mento' | 'tether' | 'circle' | 'vnx' | 'mountain' | 'angle' | 'glo' | 'brla' | 'minteo' | 'gooddollar' | 'native';
+  isNative: boolean;
+  lastUpdated: Date;
+  error?: string;
+}
+
+export interface TokenInfo {
+  symbol: string;
+  name: string;
+  decimals: number;
+  contractAddress: {
+    mainnet: string;
+    sepolia: string;
+  };
+  category: 'mento' | 'tether' | 'circle' | 'vnx' | 'mountain' | 'angle' | 'glo' | 'brla' | 'minteo' | 'gooddollar' | 'native';
+  logoUrl?: string;
+  coingeckoId?: string;
+  description?: string;
+}
+
+export interface TokenPortfolio {
+  address: string;
+  chainId: number;
+  tokens: TokenBalance[];
+  totalValueUsd: number;
+  totalValueChange24h: number;
+  lastUpdated: Date;
+  isLoading: boolean;
+  error?: string;
+}
+
+export interface PortfolioSummary {
+  totalValueUsd: number;
+  totalValueChange24h: number;
+  totalValueChangePercent24h: number;
+  tokenCount: number;
+  hasZeroBalanceTokens: boolean;
+  networkName: string;
+}
+
+export interface BalanceRefreshState {
+  isRefreshing: boolean;
+  lastRefreshTime: Date;
+  refreshError?: string;
+  autoRefreshEnabled: boolean;
+}

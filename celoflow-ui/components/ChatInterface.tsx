@@ -1,7 +1,9 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { Send, Bot, User, CheckCircle2, ChevronRight, Loader2, RefreshCcw, History, CalendarClock, X, Search, Activity, Zap, TrendingUp, AlertCircle, Mic, ChevronDown, Info, Ban, Share2, HelpCircle } from 'lucide-react';
+import { useAccount } from 'wagmi';
 import { MarkdownContent } from './MarkdownContent';
-import { streamChat, type ChatMessage as CeloflowMessage } from '../lib/celoflow-client';
+import { streamChat, type ChatMessage as CeloflowMessage, type WalletContext, type ContactData } from '../lib/celoflow-client';
+import { getContacts } from '../services/contactsService';
 import { getExchangeRate } from '../services/currencyService';
 import { Message, TransactionIntent, TransactionHistoryItem } from '../types';
 import { SUGGESTED_PROMPTS, SUPPORTED_CURRENCIES } from '../constants';
@@ -64,6 +66,7 @@ function isAbortError(error: unknown): boolean {
 }
 
 export const ChatInterface: React.FC<ChatInterfaceProps> = ({ className = '', fullScreen = false }) => {
+  const { address, isConnected, chain } = useAccount();
   const { t, language } = useI18n();
   const [messages, setMessages] = useState<Message[]>([
     {
@@ -107,6 +110,51 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ className = '', fu
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
+
+  // Create wallet context for the agent (memoized to prevent infinite re-renders)
+  const walletContext = useMemo((): WalletContext => {
+    if (isConnected && address) {
+      return {
+        wallet_address: address,
+        connected: true,
+        chain_id: chain?.id,
+        balances: {} // Will be populated by backend
+      };
+    } else {
+      return {
+        connected: false,
+        balances: {}
+      };
+    }
+  }, [address, isConnected, chain?.id]);
+
+  // Debounced wallet context update to prevent spamming backend
+  const updateWalletContextBackend = useCallback(async (context: WalletContext) => {
+    try {
+      await fetch('http://localhost:8000/wallet/context', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          address: context.wallet_address,
+          connected: context.connected,
+          chainId: context.chain_id
+        })
+      });
+    } catch (err) {
+      console.warn('Failed to update wallet context:', err);
+    }
+  }, []);
+
+  // Update wallet context in backend when it changes (with debouncing)
+  useEffect(() => {
+    const timeoutId = setTimeout(() => {
+      if (walletContext) {
+        updateWalletContextBackend(walletContext);
+      }
+    }, 500); // 500ms debounce
+
+    return () => clearTimeout(timeoutId);
+  }, [walletContext, updateWalletContextBackend]);
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -242,9 +290,35 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ className = '', fu
       rafId = null;
     };
 
+    // Load contacts to send with the request
+    let contactsData: ContactData[] = [];
+    try {
+      const allContacts = await getContacts();
+      contactsData = allContacts
+        .filter(c => !c.blocked)
+        .map(c => ({
+          id: c.id,
+          name: c.name,
+          address: c.address,
+          network: c.network,
+          city: c.city,
+          country: c.country,
+          phone: c.phone,
+          email: c.email,
+          notes: c.notes,
+          favorite: c.favorite,
+          blocked: c.blocked,
+          group: c.group,
+        }));
+    } catch (err) {
+      console.warn('Failed to load contacts for chat:', err);
+    }
+
     try {
       await streamChat({
         messages: chatMessages,
+        walletContext,
+        contacts: contactsData,
         signal: controller.signal,
         onContent: (fullContent) => {
           pendingContent = fullContent;

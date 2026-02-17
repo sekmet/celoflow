@@ -22,4 +22,5 @@ cache/
 docker-compose.yml
 deployment.json
 deployment-anvil.json
+celowflow-metadata.json
 *.log

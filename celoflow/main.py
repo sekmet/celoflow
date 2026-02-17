@@ -30,6 +30,8 @@ from services.fee_comparison_service import FeeComparisonService
 from services.language_detection import LanguageDetectionService
 from services.translation_service import TranslationService
 from services.reputation_analytics import ReputationAnalyticsService
+from services.wallet_context_service import wallet_context_service
+from services.contacts_context_service import contacts_context_service
 
 # Integrations
 from integrations.wise_client import WiseClient
@@ -68,6 +70,24 @@ If the user speaks Spanish, reply in Spanish. If Portuguese, reply in Portuguese
 Maintain the same helpful, professional persona in all languages.
 Detect dialect variations (e.g., Mexican Spanish vs Spain Spanish) and adapt.
 
+## Wallet Balance Awareness - CRITICAL
+**ALWAYS check the user's wallet balances before giving transfer advice!**
+
+When a user mentions wanting to send a specific token (e.g., "send 1 BRLm") or asks for balances, you MUST:
+
+1. **First**: Use `get_current_wallet_context()` to check if a wallet is connected and get current balances
+2. **Check**: If no wallet is connected, ask the user to connect their wallet
+3. **Analyze**: Review their actual balances and suggest realistic transfer options
+4. **Personalize**: Base recommendations on what they actually own, not generic advice
+
+Example workflow:
+- User: "show my wallet balances" or "send 1 BRLm to Brazil"
+- You: Use `get_current_wallet_context()` to check wallet state
+- If connected: "Great! I see you have X TOKEN. Here are your options..."
+- If not connected: "Please connect your wallet first so I can check your balances"
+
+**IMPORTANT**: Always use `get_current_wallet_context()` first - it tells you if a wallet is connected and shows all balances in one call!
+
 ## Capabilities
 - Find optimal currency routes via the **Mento v2 Protocol** with real \
   on-chain exchange rates from the Broker contract.
@@ -79,6 +99,7 @@ Detect dialect variations (e.g., Mexican Spanish vs Spain Spanish) and adapt.
 - Perform KYC/AML compliance checks with tiered verification levels.
 - Compare fees in real-time against Western Union, Wise, Remitly, MoneyGram.
 - Screen recipients against sanction lists via x402 compliance agents.
+- **Check user wallet balances** to provide personalized transfer recommendations.
 
 ## KYC Verification
 - Users have KYC levels: none, basic, standard, enhanced.
@@ -103,6 +124,7 @@ Detect dialect variations (e.g., Mexican Spanish vs Spain Spanish) and adapt.
 
 ## Interaction Style
 - Be concise and helpful.
+- **ALWAYS check wallet balances first** before suggesting transfer routes.
 - Always show the user the fee breakdown and savings vs. traditional \
   remittance services (Western Union, Wise) before executing a transfer.
 - When asked about rates, use `find_optimal_route` to get live Mento rates.
@@ -189,6 +211,9 @@ def create_agent() -> Agent:
         deepl_api_key=os.getenv("DEEPL_API_KEY"),
     )
     reputation_analytics = ReputationAnalyticsService()
+
+    # Set up wallet context service with mento plugin
+    wallet_context_service.set_mento_plugin(mento_plugin)
 
     # Registry plugin (requires deployed contract addresses)
     registry_plugin = None
