@@ -100,6 +100,16 @@ class RegistryClient:
 
         return self._send_tx(tx)
 
+    def set_agent_wallet(self, agent_id: int, wallet: str) -> Any:
+        """Set the agent wallet address on-chain."""
+        if not self.account:
+            raise RuntimeError("No private key configured for write operations")
+        
+        tx = self.identity_registry.functions.setAgentWallet(
+            agent_id, Web3.to_checksum_address(wallet)
+        )
+        return self._send_tx(tx)
+
     # ── Reputation ────────────────────────────────────────────────
 
     def get_reputation(self, agent_id: int) -> Dict[str, Any]:

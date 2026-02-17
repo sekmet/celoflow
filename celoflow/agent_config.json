@@ -1,0 +1,96 @@
+{
+  "type": "agent-registration-v1",
+  "metadata": {
+    "name": "CeloFlow Remittance Agent",
+    "description": "AI-powered cross-border remittance assistant on Celo with real-time Mento v2 rates and TEE-backed security",
+      "skills": [
+      {
+        "name": "financial_operations/currency_exchange",
+        "description": "Find optimal currency exchange routes using Mento v2",
+        "oasp_id": "financial_operations/currency_exchange",
+        "parameters": {
+          "from_currency": {
+            "type": "string",
+            "enum": ["USDm", "CELO", "axlUSDC"]
+          },
+          "to_currency": {
+            "type": "string",
+            "enum": ["PHPm", "XOFm", "CELO", "axlUSDC"]
+          },
+          "amount": { "type": "number", "minimum": 0.01 }
+        },
+        "implementation": {
+          "type": "mcp_tool",
+          "tool_name": "find_optimal_route"
+        }
+      },
+      {
+        "name": "financial_operations/cross_border_payments",
+        "description": "Execute secure cross-border transfer with TEE signing",
+        "oasp_id": "financial_operations/cross_border_payments",
+        "parameters": {
+          "recipient": { "type": "string", "format": "address" },
+          "amount": { "type": "number", "minimum": 0.01 },
+          "currency": { "type": "string", "enum": ["USDm", "PHPm", "XOFm"] }
+        },
+        "implementation": {
+          "type": "mcp_tool",
+          "tool_name": "execute_transfer"
+        }
+      },
+      {
+        "name": "compliance/risk_assessment",
+        "description": "Perform KYC/AML compliance verification",
+        "oasp_id": "compliance/risk_assessment",
+        "parameters": {
+          "recipient": { "type": "string" },
+          "amount": { "type": "number" },
+          "currency": { "type": "string" }
+        },
+        "implementation": {
+          "type": "mcp_tool",
+          "tool_name": "check_compliance"
+        }
+      }
+    ]
+  },
+  "services": {
+    "mcp": {
+      "enabled": true,
+      "endpoints": {
+        "mcp": "https://api.celoflow.com/mcp",
+        "oasp": "https://api.celoflow.com/.well-known/oasp.json" 
+      },
+      "capabilities": {
+        "tools": [
+          {
+            "name": "find_optimal_route",
+            "description": "Real-time Mento v2 rate optimization",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "from_currency": { "type": "string" },
+                "to_currency": { "type": "string" },
+                "amount": { "type": "number" }
+              },
+              "required": ["from_currency", "to_currency", "amount"]
+            }
+          },
+          {
+            "name": "execute_transfer",
+            "description": "Execute secure cross-border transfer",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "recipient": { "type": "string" },
+                "amount": { "type": "number" },
+                "currency": { "type": "string" }
+              },
+              "required": ["recipient", "amount", "currency"]
+            }
+          }
+        ]
+      }
+    }
+  }
+}

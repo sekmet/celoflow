@@ -1,0 +1,15 @@
+{
+  "name": "CeloFlow",
+  "short_name": "CeloFlow",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#35D07F",
+  "icons": [
+    {
+      "src": "https://raw.githubusercontent.com/celo-org/celo-branding/master/icons/celo_glyph_color.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

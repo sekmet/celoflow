@@ -84,6 +84,14 @@ class RegistryPlugin(AgentPlugin[AgentContext]):
             agent.tools.append(get_agent_info_tool)
             agent.tools.append(submit_feedback_tool)
             agent.tools.append(register_agent_tool)
+
+            @function_tool
+            async def set_agent_wallet_tool(wallet_address: str) -> str:
+                """Set the agent wallet address on-chain."""
+                result = await self.set_agent_wallet_onchain(wallet_address)
+                return json.dumps(result)
+
+            agent.tools.append(set_agent_wallet_tool)
         return agent
 
     # ------------------------------------------------------------------
@@ -205,6 +213,27 @@ class RegistryPlugin(AgentPlugin[AgentContext]):
             receipt = self.client.register_agent(token_uri=token_uri)
             return {
                 "success": True,
+                "receipt": str(receipt),
+            }
+        except Exception as e:
+            return {"error": str(e)}
+
+    # ------------------------------------------------------------------
+    # Logic: set_agent_wallet_onchain
+    # ------------------------------------------------------------------
+
+    async def set_agent_wallet_onchain(self, wallet_address: str, agent_id: int = 0) -> Dict[str, Any]:
+        """Set agent wallet address on-chain."""
+        aid = agent_id if agent_id > 0 else self.agent_id
+        if aid is None or aid == 0:
+            return {"error": "No agent_id provided"}
+
+        try:
+            receipt = self.client.set_agent_wallet(aid, wallet_address)
+            return {
+                "success": True,
+                "agent_id": aid,
+                "wallet": wallet_address,
                 "receipt": str(receipt),
             }
         except Exception as e:

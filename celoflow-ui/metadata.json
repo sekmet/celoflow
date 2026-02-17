@@ -1,0 +1,7 @@
+{
+  "name": "CeloFlow",
+  "description": "An AI-powered remittance agent on the Celo blockchain that democratizes cross-border payments via natural language processing and the Mento Protocol.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
