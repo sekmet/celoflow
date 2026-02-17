@@ -1,0 +1,90 @@
+services:
+  celoflow:
+    build:
+      context: .
+      dockerfile: Dockerfile.production
+    ports:
+      - "8000:8000"
+    environment:
+      # Server
+      - PORT=8000
+      - API_HOST=0.0.0.0
+      - LOG_LEVEL=INFO
+      # Agent Identity
+      - AGENT_NAME=Remittance Agent
+      - AGENT_DOMAIN=celoflow.remittance
+      # Model Provider
+      - MODEL_PROVIDER=azure_openai
+      - AZURE_FORGE_API_KEY=${AZURE_FORGE_API_KEY}
+      - AZURE_FORGE_ENDPOINT=${AZURE_FORGE_ENDPOINT}
+      - AZURE_OPENAI_API_VERSION=2023-05-15
+      - MODEL_NAME=${MODEL_NAME:-gpt-5-chat}
+      # Chain
+      - CELO_RPC_URL=${CELO_RPC_URL}
+      - CHAIN_ID=${CHAIN_ID:-11142220}
+      # Agent Wallet
+      - AGENT_PRIVATE_KEY=${AGENT_PRIVATE_KEY}
+      # Contract Addresses
+      - IDENTITY_REGISTRY=${IDENTITY_REGISTRY}
+      - REPUTATION_REGISTRY=${REPUTATION_REGISTRY}
+      - TEE_REGISTRY=${TEE_REGISTRY}
+      - AGENT_ID=${AGENT_ID:-0}
+      # TEE (production dstack)
+      - USE_TEE=true
+      - TEE_ENDPOINT=${TEE_ENDPOINT:-/var/run/dstack.sock}
+      - DSTACK_SIMULATOR_ENDPOINT=${DSTACK_SIMULATOR_ENDPOINT}
+      - TEE_DOMAIN=celoflow.remittance
+      - TEE_SALT=remittance-agent-v1
+      # KYC
+      - SELF_PROTOCOL_API_KEY=${SELF_PROTOCOL_API_KEY}
+      - SELF_PROTOCOL_URL=${SELF_PROTOCOL_URL:-https://api.self.id}
+      - DEFAULT_KYC_LEVEL=${DEFAULT_KYC_LEVEL:-none}
+      # Compliance
+      - COMPLIANCE_AGENT_URL=${COMPLIANCE_AGENT_URL}
+      - COMPLIANCE_FEE_USDT=${COMPLIANCE_FEE_USDT:-0.10}
+      - MAX_SINGLE_TRANSFER=${MAX_SINGLE_TRANSFER:-10000}
+      # Notifications
+      - TWILIO_SID=${TWILIO_SID}
+      - TWILIO_TOKEN=${TWILIO_TOKEN}
+      - TWILIO_FROM=${TWILIO_FROM}
+      - ENABLE_WHATSAPP_META=${ENABLE_WHATSAPP_META:-false}
+      - ENABLE_WHATSMEOW=${ENABLE_WHATSMEOW:-false}
+      - ENABLE_TELEGRAM=${ENABLE_TELEGRAM:-false}
+      - DEFAULT_TELEGRAM_CHAT_ID=${DEFAULT_TELEGRAM_CHAT_ID}
+      - DEFAULT_WHATSAPP_NUMBER=${DEFAULT_WHATSAPP_NUMBER}
+      # Translation
+      - GOOGLE_TRANSLATE_API_KEY=${GOOGLE_TRANSLATE_API_KEY}
+      - DEEPL_API_KEY=${DEEPL_API_KEY}
+      - DEFAULT_LANGUAGE=${DEFAULT_LANGUAGE:-en}
+    volumes:
+      - celoflow-data:/app/data
+      - ${DSTACK_SOCKET_PATH:-/var/run/dstack.sock}:/var/run/dstack.sock
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/info"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: "2.0"
+        reservations:
+          memory: 512M
+          cpus: "0.5"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:size=100M
+
+volumes:
+  celoflow-data:
+    driver: local

@@ -1,16 +1,19 @@
 import React, { useState, useEffect } from 'react';
 import { WagmiProvider } from 'wagmi';
 import { QueryClientProvider } from '@tanstack/react-query';
-import { Bot, ChevronRight, Globe, Lock, Wallet, Zap, CheckCircle2, Moon, Sun, ArrowLeft } from 'lucide-react';
+import { Bot, ChevronRight, Globe, Lock, Wallet, Zap, CheckCircle2, Moon, Sun, ArrowLeft, Users } from 'lucide-react';
 import { ChatInterface } from './components/ChatInterface';
 import { SmartRouter } from './components/SmartRouter';
 import { WalletConnect } from './components/WalletConnect';
 import { config, queryClient } from './lib/wagmi-config';
+import { ContactsManager } from './components/ContactsManager';
+import { LanguageSwitcher } from './components/LanguageSwitcher';
 import { NAV_LINKS } from './constants';
 
 function AppContent() {
   const [isDark, setIsDark] = useState(false);
   const [currentView, setCurrentView] = useState<'landing' | 'app'>('landing');
+  const [showContacts, setShowContacts] = useState(false);
 
   useEffect(() => {
     if (isDark) {
@@ -31,6 +34,14 @@ function AppContent() {
               <span className="font-display font-bold text-xl tracking-tight text-gray-900 dark:text-white group-hover:opacity-80 transition-opacity">CeloFlow</span>
             </div>
             <div className="flex items-center gap-3">
+                 <button
+                    onClick={() => setShowContacts(true)}
+                    className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-gray-600 dark:text-gray-300"
+                    title="Contacts"
+                 >
+                    <Users className="w-5 h-5" />
+                 </button>
+                 <LanguageSwitcher />
                  <WalletConnect />
                  <button 
                     onClick={() => setIsDark(!isDark)}
@@ -51,6 +62,7 @@ function AppContent() {
                 <ChatInterface fullScreen={true} />
              </div>
         </div>
+        {showContacts && <ContactsManager onClose={() => setShowContacts(false)} />}
       </div>
     );
   }

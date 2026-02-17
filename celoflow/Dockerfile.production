@@ -1,0 +1,35 @@
+FROM python:3.13-slim AS builder
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl build-essential && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN pip install --no-cache-dir uv
+
+COPY pyproject.toml README.md uv.lock* contextwise-0.3.0-py3-none-any.whl ./
+RUN uv sync --frozen --no-dev 2>/dev/null || uv sync --no-dev
+
+COPY . .
+
+FROM python:3.13-slim
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends curl && \
+    rm -rf /var/lib/apt/lists/* && \
+    groupadd -r celoflow && useradd -r -g celoflow -d /app celoflow
+
+COPY --from=builder /app /app
+
+RUN mkdir -p /app/data && chown -R celoflow:celoflow /app
+
+USER celoflow
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 --start-period=30s \
+    CMD curl -f http://localhost:8000/api/info || exit 1
+
+CMD ["uv", "run", "python", "-m", "celoflow.server"]

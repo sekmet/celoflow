@@ -11,13 +11,15 @@ from agents import function_tool
 logger = logging.getLogger(__name__)
 
 # These module-level references are set by main.py after plugin init
-# These module-level references are set by main.py after plugin init
 _mento_plugin: Any = None
 _tee_plugin: Any = None
 _remittance_plugin: Any = None
 _compliance_plugin: Any = None
 _notification_plugin: Any = None
 _registry_plugin: Any = None
+_kyc_plugin: Any = None
+_compliance_agent_plugin: Any = None
+_fee_comparison_service: Any = None
 
 
 def set_plugins(
@@ -27,16 +29,23 @@ def set_plugins(
     compliance: Any = None,
     notification: Any = None,
     registry: Any = None,
+    kyc: Any = None,
+    compliance_agent: Any = None,
+    fee_comparison: Any = None,
 ) -> None:
     """Wire up plugin references for tools to use."""
     global _mento_plugin, _tee_plugin, _remittance_plugin
     global _compliance_plugin, _notification_plugin, _registry_plugin
+    global _kyc_plugin, _compliance_agent_plugin, _fee_comparison_service
     _mento_plugin = mento
     _tee_plugin = tee
     _remittance_plugin = remittance
     _compliance_plugin = compliance
     _notification_plugin = notification
     _registry_plugin = registry
+    _kyc_plugin = kyc
+    _compliance_agent_plugin = compliance_agent
+    _fee_comparison_service = fee_comparison
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -163,12 +172,41 @@ async def execute_transfer(
                  "status": "failed"
              })
 
-    # 2. Derive User-Specific TEE Key (simulation)
-    # in production, we'd use user_id to derive a unique path
-    # key_info = await _tee_plugin.get_key(user_id) ...
-    # For now, we use the agent's main TEE key
-    
-    # 3. Optimize Route
+    # 2. KYC Eligibility Check
+    if _kyc_plugin:
+        try:
+            kyc_result = await _kyc_plugin.check_transfer_eligibility(user_id, amount)
+            if not kyc_result.get("eligible", True):
+                return json.dumps({
+                    "error": kyc_result.get("message", "KYC level insufficient for this amount."),
+                    "status": "kyc_required",
+                    "current_level": kyc_result.get("current_level", "none"),
+                    "suggested_upgrade": kyc_result.get("suggested_upgrade"),
+                    "upgrade_fee": kyc_result.get("upgrade_fee"),
+                })
+        except Exception as e:
+            logger.warning("KYC check failed (non-blocking): %s", e)
+
+    # 3. Compliance Screening
+    if _compliance_agent_plugin:
+        try:
+            screening = await _compliance_agent_plugin.check_pre_transfer(
+                recipient_address=recipient_address,
+                destination_country="",
+                amount=amount,
+            )
+            if not screening.get("approved", True):
+                return json.dumps({
+                    "error": "Transfer blocked by compliance screening.",
+                    "status": "compliance_blocked",
+                    "screening_id": screening.get("screening_id", ""),
+                    "risk_score": screening.get("risk_score", 0),
+                    "issues": screening.get("issues", []),
+                })
+        except Exception as e:
+            logger.warning("Compliance screening failed (non-blocking): %s", e)
+
+    # 4. Optimize Route
     try:
         route = await _mento_plugin.find_optimal_route(
             from_currency, to_currency, Decimal(str(amount))
@@ -269,3 +307,36 @@ async def get_wallet_balance(wallet_address: str) -> str:
         },
         "note": "Connect to RPC to fetch live balances",
     })
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Tool: compare_fees_with_providers
+# ═══════════════════════════════════════════════════════════════════
+
+@function_tool
+async def compare_fees_with_providers(
+    amount: float,
+    from_currency: str,
+    destination_country: str,
+) -> str:
+    """Compare CeloFlow fees against traditional remittance providers.
+
+    Args:
+        amount: Transfer amount in source currency
+        from_currency: Source currency code (e.g. USD, cUSD)
+        destination_country: Destination country (e.g. Philippines, Mexico, Nigeria)
+
+    Returns:
+        Fee comparison data with savings information as JSON string
+    """
+    import json
+
+    if not _fee_comparison_service:
+        return json.dumps({"error": "Fee comparison service not configured"})
+
+    result = await _fee_comparison_service.compare_fees(
+        amount=amount,
+        from_currency=from_currency,
+        destination_country=destination_country,
+    )
+    return json.dumps(result)

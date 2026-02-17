@@ -22,6 +22,14 @@ from plugins.compliance_plugin import CompliancePlugin
 from plugins.mento_plugin import MentoPlugin
 from plugins.notification_plugin import NotificationPlugin
 from plugins.scheduler_plugin import SchedulerPlugin
+from plugins.kyc_plugin import KYCPlugin
+from plugins.compliance_agent_plugin import ComplianceAgentPlugin
+
+# Services
+from services.fee_comparison_service import FeeComparisonService
+from services.language_detection import LanguageDetectionService
+from services.translation_service import TranslationService
+from services.reputation_analytics import ReputationAnalyticsService
 
 # Tools
 from tools import remittance_tools
@@ -50,9 +58,12 @@ Supported languages:
 - Spanish (Español)
 - Portuguese (Português)
 - French (Français)
+- Swahili (Kiswahili)
+- Filipino/Tagalog
 
 If the user speaks Spanish, reply in Spanish. If Portuguese, reply in Portuguese.
 Maintain the same helpful, professional persona in all languages.
+Detect dialect variations (e.g., Mexican Spanish vs Spain Spanish) and adapt.
 
 ## Capabilities
 - Find optimal currency routes via the **Mento v2 Protocol** with real \
@@ -62,7 +73,26 @@ Maintain the same helpful, professional persona in all languages.
 - Execute secure transfers using TEE-backed signing inside a Trusted \
   Execution Environment (Intel TDX via Dstack).
 - Verify agent identity and reputation on-chain (ERC-8004 standard).
-- Perform basic KYC/AML compliance checks.
+- Perform KYC/AML compliance checks with tiered verification levels.
+- Compare fees in real-time against Western Union, Wise, Remitly, MoneyGram.
+- Screen recipients against sanction lists via x402 compliance agents.
+
+## KYC Verification
+- Users have KYC levels: none, basic, standard, enhanced.
+- Each level has different transfer limits (none: $50, basic: $1K, standard: $10K, enhanced: $100K).
+- Use `verify_user_kyc` to initiate verification and `get_kyc_status` to check.
+- Use `check_kyc_transfer_eligibility` before high-value transfers.
+- Always suggest KYC upgrade when a transfer exceeds the user's current limit.
+
+## Compliance Screening
+- Use `screen_recipient` to check addresses against sanction lists before transfers.
+- High-risk jurisdictions are automatically flagged.
+- All screening results are cached and audited.
+
+## Fee Comparison
+- Always show fee comparisons with traditional providers when discussing transfers.
+- Use `compare_fees_with_providers` to get real-time comparisons.
+- Highlight savings vs traditional services prominently.
 
 ## Interaction Style
 - Be concise and helpful.
@@ -121,6 +151,30 @@ def create_agent() -> Agent:
         default_whatsapp_number=os.getenv("DEFAULT_WHATSAPP_NUMBER"),
     )
 
+    # KYC Plugin
+    kyc_plugin = KYCPlugin(
+        self_protocol_api_key=os.getenv("SELF_PROTOCOL_API_KEY"),
+        self_protocol_base_url=os.getenv("SELF_PROTOCOL_URL", "https://api.self.id"),
+        default_kyc_level=os.getenv("DEFAULT_KYC_LEVEL", "none"),
+    )
+
+    # Compliance Agent Plugin (x402 inter-agent screening)
+    compliance_agent_plugin = ComplianceAgentPlugin(
+        compliance_agent_url=os.getenv("COMPLIANCE_AGENT_URL"),
+        compliance_fee_usdt=float(os.getenv("COMPLIANCE_FEE_USDT", "0.10")),
+    )
+
+    # Services (non-plugin, used by tools)
+    fee_comparison_service = FeeComparisonService()
+    language_detection_service = LanguageDetectionService(
+        default_language=os.getenv("DEFAULT_LANGUAGE", "en"),
+    )
+    translation_service = TranslationService(
+        google_api_key=os.getenv("GOOGLE_TRANSLATE_API_KEY"),
+        deepl_api_key=os.getenv("DEEPL_API_KEY"),
+    )
+    reputation_analytics = ReputationAnalyticsService()
+
     # Registry plugin (requires deployed contract addresses)
     registry_plugin = None
     if os.getenv("IDENTITY_REGISTRY"):
@@ -142,6 +196,9 @@ def create_agent() -> Agent:
         compliance=compliance_plugin,
         notification=notification_plugin,
         registry=registry_plugin,
+        kyc=kyc_plugin,
+        compliance_agent=compliance_agent_plugin,
+        fee_comparison=fee_comparison_service,
     )
 
     # ── Collect plugins ──────────────────────────────────────────
@@ -153,6 +210,8 @@ def create_agent() -> Agent:
         compliance_plugin,
         notification_plugin,
         SchedulerPlugin(),
+        kyc_plugin,
+        compliance_agent_plugin,
     ]
     if registry_plugin:
         plugins.append(registry_plugin)
@@ -171,6 +230,7 @@ def create_agent() -> Agent:
             remittance_tools.calculate_fees,
             remittance_tools.execute_transfer,
             remittance_tools.get_wallet_balance,
+            remittance_tools.compare_fees_with_providers,
         ],
         plugins=plugins,
     )

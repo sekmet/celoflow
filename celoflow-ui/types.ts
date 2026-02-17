@@ -37,3 +37,21 @@ export interface ExchangeRate {
   pair: string;
   rate: number;
 }
+
+export interface Contact {
+  id: string;
+  name: string;
+  address: string;
+  network: string;
+  city: string;
+  country: string;
+  avatar: string;
+  phone: string;
+  email: string;
+  notes: string;
+  favorite: boolean;
+  blocked: boolean;
+  group: string;
+  createdAt: string;
+  updatedAt: string;
+}
