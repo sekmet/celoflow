@@ -1,7 +1,12 @@
 import { createRxDatabase } from 'rxdb/plugins/core';
 import { getRxStorageDexie } from 'rxdb/plugins/storage-dexie';
+import { addRxPlugin } from 'rxdb';
+import { RxDBDevModePlugin } from 'rxdb/plugins/dev-mode';
 import type { RxCollection, RxDatabase, RxJsonSchema } from 'rxdb';
 import { Contact } from '../types';
+
+// Enable dev-mode for detailed error messages
+addRxPlugin(RxDBDevModePlugin);
 
 interface ContactsCollections {
   contacts: RxCollection<Contact>;
@@ -61,6 +66,24 @@ function generateId(): string {
   return `contact_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 }
 
+// Fallback localStorage functions for when RxDB fails
+function getLocalStorageContacts(): Contact[] {
+  try {
+    const stored = localStorage.getItem('celoflow_contacts');
+    return stored ? JSON.parse(stored) : [];
+  } catch {
+    return [];
+  }
+}
+
+function setLocalStorageContacts(contacts: Contact[]): void {
+  try {
+    localStorage.setItem('celoflow_contacts', JSON.stringify(contacts));
+  } catch (error) {
+    console.error('Failed to save contacts to localStorage:', error);
+  }
+}
+
 async function getDatabase(): Promise<RxDatabase<ContactsCollections>> {
   if (!databasePromise) {
     databasePromise = (async () => {
@@ -69,7 +92,6 @@ async function getDatabase(): Promise<RxDatabase<ContactsCollections>> {
           name: DATABASE_NAME,
           storage: getRxStorageDexie(),
           multiInstance: false,
-          ignoreDuplicate: true,
         });
         return db;
       } catch (error) {
@@ -116,9 +138,14 @@ async function getContactDocument(id: string) {
 }
 
 export async function getContacts(): Promise<Contact[]> {
-  const collection = await getContactsCollection();
-  const documents = await collection.find().exec();
-  return documents.map((document) => document.toJSON());
+  try {
+    const collection = await getContactsCollection();
+    const docs = await collection.find().exec();
+    return docs.map((doc) => doc.toJSON());
+  } catch (error) {
+    console.warn('RxDB failed, falling back to localStorage:', error);
+    return getLocalStorageContacts();
+  }
 }
 
 export async function getContact(id: string): Promise<Contact | undefined> {
@@ -127,17 +154,31 @@ export async function getContact(id: string): Promise<Contact | undefined> {
 }
 
 export async function createContact(data: Omit<Contact, 'id' | 'createdAt' | 'updatedAt'>): Promise<Contact> {
-  const collection = await getContactsCollection();
-  const now = new Date().toISOString();
-  const contact: Contact = {
-    ...data,
-    id: generateId(),
-    createdAt: now,
-    updatedAt: now,
-  };
-
-  await collection.insert(contact);
-  return contact;
+  try {
+    const collection = await getContactsCollection();
+    const now = new Date().toISOString();
+    const contact: Contact = {
+      ...data,
+      id: generateId(),
+      createdAt: now,
+      updatedAt: now,
+    };
+    await collection.insert(contact);
+    return contact;
+  } catch (error) {
+    console.warn('RxDB failed, using localStorage fallback:', error);
+    const now = new Date().toISOString();
+    const contact: Contact = {
+      ...data,
+      id: generateId(),
+      createdAt: now,
+      updatedAt: now,
+    };
+    const contacts = getLocalStorageContacts();
+    contacts.push(contact);
+    setLocalStorageContacts(contacts);
+    return contact;
+  }
 }
 
 export async function updateContact(
