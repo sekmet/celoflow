@@ -24,8 +24,10 @@ class OASFConfig:
             "schema_version": self.SCHEMA_VERSION,
             "authors": [
                 {
-                    "name": "CeloFlow Team",
-                    "email": "team@celoflow.com"
+                    "name": "CeloFlow team",
+                    "email": "celoflow@contextwise.xyz",
+                    "url": "https://celoflow.contextwise.xyz",
+                    "organization": "Contextwise"
                 }
             ],
             "created_at": self.created_at,
@@ -90,17 +92,17 @@ class OASFConfig:
         return [
             {
                 "type": "source_code",
-                "url": "https://github.com/celoflow/celoflow-agent",
+                "url": "https://github.com/sekmet/celoflow",
                 "description": "Main source code repository"
             },
             {
                 "type": "docker_image",
-                "url": "celoflow/agent:latest",
+                "url": "sekmet/celoflow:latest",
                 "description": "Docker container image"
             },
             {
                 "type": "mcp_endpoint",
-                "url": os.getenv("MCP_ENDPOINT", "https://api.celoflow.com/mcp"),
+                "url": os.getenv("MCP_ENDPOINT", "https://api-cflw.contextwise.xyz/mcp"),
                 "description": "MCP protocol endpoint"
             }
         ]

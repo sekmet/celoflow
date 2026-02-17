@@ -9,6 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@metamask/sdk": "^0.34.0",
     "@tanstack/react-query": "^5.90.21",
     "dexie": "^4.3.0",
     "lucide-react": "^0.571.0",
@@ -21,8 +22,10 @@
     "wagmi": "^3.4.4"
   },
   "devDependencies": {
+    "@tailwindcss/vite": "^4.1.18",
     "@types/node": "^25.2.3",
     "@vitejs/plugin-react": "^5.1.4",
+    "tailwindcss": "^4.1.18",
     "typescript": "~5.9.3",
     "vite": "^7.3.1"
   }

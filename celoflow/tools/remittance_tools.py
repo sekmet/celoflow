@@ -20,6 +20,7 @@ _registry_plugin: Any = None
 _kyc_plugin: Any = None
 _compliance_agent_plugin: Any = None
 _fee_comparison_service: Any = None
+_wise_client: Any = None
 
 
 def set_plugins(
@@ -32,11 +33,13 @@ def set_plugins(
     kyc: Any = None,
     compliance_agent: Any = None,
     fee_comparison: Any = None,
+    wise: Any = None,
 ) -> None:
     """Wire up plugin references for tools to use."""
     global _mento_plugin, _tee_plugin, _remittance_plugin
     global _compliance_plugin, _notification_plugin, _registry_plugin
     global _kyc_plugin, _compliance_agent_plugin, _fee_comparison_service
+    global _wise_client
     _mento_plugin = mento
     _tee_plugin = tee
     _remittance_plugin = remittance
@@ -46,6 +49,7 @@ def set_plugins(
     _kyc_plugin = kyc
     _compliance_agent_plugin = compliance_agent
     _fee_comparison_service = fee_comparison
+    _wise_client = wise
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -318,16 +322,22 @@ async def compare_fees_with_providers(
     amount: float,
     from_currency: str,
     destination_country: str,
+    prefer_realtime: bool = True,
 ) -> str:
-    """Compare CeloFlow fees against traditional remittance providers.
+    """Compare CeloFlow fees against traditional remittance providers with real-time data.
+
+    Uses the Wise Comparison API for live fee data when available,
+    with automatic fallback to static provider data.
 
     Args:
         amount: Transfer amount in source currency
         from_currency: Source currency code (e.g. USD, cUSD)
         destination_country: Destination country (e.g. Philippines, Mexico, Nigeria)
+        prefer_realtime: If True, fetch real-time data from Wise API
 
     Returns:
-        Fee comparison data with savings information as JSON string
+        Fee comparison data with savings, rankings, confidence scores, and
+        data source indicators as JSON string
     """
     import json
 
@@ -335,6 +345,43 @@ async def compare_fees_with_providers(
         return json.dumps({"error": "Fee comparison service not configured"})
 
     result = await _fee_comparison_service.compare_fees(
+        amount=amount,
+        from_currency=from_currency,
+        destination_country=destination_country,
+        prefer_realtime=prefer_realtime,
+    )
+    return json.dumps(result)
+
+
+# ═════════════════════════════════════════════════════════════════
+# Tool: monitor_fee_changes
+# ═════════════════════════════════════════════════════════════════
+
+@function_tool
+async def monitor_fee_changes(
+    amount: float,
+    from_currency: str,
+    destination_country: str,
+) -> str:
+    """Monitor fee changes and trends for a specific remittance corridor.
+
+    Tracks fee variations over time and provides trend analysis,
+    predictions, and optimization recommendations.
+
+    Args:
+        amount: Transfer amount in source currency
+        from_currency: Source currency code (e.g. USD, cUSD)
+        destination_country: Destination country (e.g. Philippines, Mexico, Nigeria)
+
+    Returns:
+        Fee trend data with change indicators and recommendations as JSON string
+    """
+    import json
+
+    if not _fee_comparison_service:
+        return json.dumps({"error": "Fee comparison service not configured"})
+
+    result = await _fee_comparison_service.monitor_fee_changes(
         amount=amount,
         from_currency=from_currency,
         destination_country=destination_country,

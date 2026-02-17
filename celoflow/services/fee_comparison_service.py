@@ -2,6 +2,7 @@
 
 Compares CeloFlow fees against Western Union, Wise, Remitly and other
 traditional remittance providers with caching and rate limiting.
+Supports real-time data from the Wise Comparison API with fallback to static data.
 """
 
 from __future__ import annotations
@@ -9,14 +10,18 @@ from __future__ import annotations
 import logging
 import time
 from decimal import Decimal
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 import httpx
 
+if TYPE_CHECKING:
+    from integrations.wise_client import WiseClient
+
 logger = logging.getLogger(__name__)
 
-# Cache TTL in seconds (15 minutes for fee data)
-FEE_CACHE_TTL = 900
+# Cache TTL in seconds
+FEE_CACHE_TTL = 900          # 15 minutes for static data
+REALTIME_CACHE_TTL = 300     # 5 minutes for real-time data
 
 # Rate limit: max requests per minute per provider
 RATE_LIMIT_PER_MINUTE = 10
@@ -101,17 +106,34 @@ CELOFLOW_FEE = {
 
 
 class FeeComparisonService:
-    """Compare CeloFlow fees against traditional remittance providers."""
+    """Compare CeloFlow fees against traditional remittance providers.
 
-    def __init__(self) -> None:
+    Supports a hybrid approach:
+    - Real-time data from the Wise Comparison API when available
+    - Fallback to static provider fee data when API is unavailable
+    - Confidence scoring to indicate data freshness and reliability
+    """
+
+    def __init__(self, wise_client: Optional["WiseClient"] = None) -> None:
         self._cache: Dict[str, Dict[str, Any]] = {}
+        self._realtime_cache: Dict[str, Dict[str, Any]] = {}
         self._rate_limit_tracker: Dict[str, List[float]] = {}
         self._historical_data: List[Dict[str, Any]] = []
-        logger.info("FeeComparisonService initialised")
+        self._wise_client = wise_client
+        self._fee_monitor_data: List[Dict[str, Any]] = []
+        logger.info(
+            "FeeComparisonService initialised (wise_client=%s)",
+            "configured" if wise_client and wise_client.is_configured else "none",
+        )
 
     # ------------------------------------------------------------------
     # Public: compare_fees
     # ------------------------------------------------------------------
+
+    def set_wise_client(self, client: "WiseClient") -> None:
+        """Set or replace the Wise API client after init."""
+        self._wise_client = client
+        logger.info("WiseClient attached to FeeComparisonService")
 
     async def compare_fees(
         self,
@@ -119,6 +141,7 @@ class FeeComparisonService:
         from_currency: str,
         destination_country: str,
         celoflow_actual_fee: Optional[float] = None,
+        prefer_realtime: bool = True,
     ) -> Dict[str, Any]:
         """Compare fees across all providers for a given transfer.
 
@@ -127,16 +150,26 @@ class FeeComparisonService:
             from_currency: Source currency code
             destination_country: Destination country name
             celoflow_actual_fee: Actual CeloFlow fee if already calculated
+            prefer_realtime: If True, attempt Wise API call first
 
         Returns:
             Comparison data with all providers, savings, and recommendations
         """
+        # Check real-time cache first (shorter TTL)
         cache_key = f"{amount}:{from_currency}:{destination_country}"
+        if prefer_realtime:
+            rt_cached = self._get_realtime_cached(cache_key)
+            if rt_cached:
+                return rt_cached
+
+        # Check static cache
         cached = self._get_cached(cache_key)
-        if cached:
+        if cached and not prefer_realtime:
             return cached
 
         comparisons: List[Dict[str, Any]] = []
+        data_source = "static"
+        last_updated = time.time()
 
         # Calculate CeloFlow fee
         cf_fee = celoflow_actual_fee
@@ -154,6 +187,8 @@ class FeeComparisonService:
             "fx_markup": 0.0,
             "speed": CELOFLOW_FEE["speed"],
             "recipient_receives": round(amount - cf_fee, 2),
+            "confidence": "high",
+            "data_source": "calculated",
             "breakdown": {
                 "network_fee": round(amount * CELOFLOW_FEE["network_fee_pct"], 4),
                 "agent_fee": round(amount * CELOFLOW_FEE["agent_fee_pct"], 4),
@@ -162,43 +197,85 @@ class FeeComparisonService:
         }
         comparisons.append(celoflow_entry)
 
-        # Calculate traditional provider fees
-        for provider_id, provider in PROVIDER_FEES.items():
-            corridor = provider["corridors"].get(destination_country, {})
-            fee_pct = corridor.get("fee_pct", provider["base_fee_pct"])
-            fx_markup = corridor.get("fx_markup", provider["fx_markup_pct"])
+        # Try real-time Wise API data first
+        wise_data = None
+        if prefer_realtime and self._wise_client:
+            try:
+                wise_data = await self._wise_client.get_comparison_for_country(
+                    amount=amount,
+                    from_currency=from_currency,
+                    destination_country=destination_country,
+                )
+                if wise_data and not wise_data.get("error"):
+                    data_source = wise_data.get("data_source", "realtime")
+                    last_updated = wise_data.get("fetched_at", time.time())
+                else:
+                    logger.warning(
+                        "Wise API returned error, falling back to static: %s",
+                        wise_data.get("error", "unknown"),
+                    )
+                    wise_data = None
+            except Exception as e:
+                logger.warning("Wise API call failed, falling back to static: %s", e)
+                wise_data = None
 
-            transfer_fee = max(amount * fee_pct, provider["min_fee"])
-            fx_cost = amount * fx_markup
-            total_fee = transfer_fee + fx_cost
+        # Build provider comparisons from Wise data or static fallback
+        if wise_data and wise_data.get("providers"):
+            for wp in wise_data["providers"]:
+                comparisons.append({
+                    "provider": wp["name"],
+                    "total_fee": wp["total_cost"],
+                    "fee_percentage": round(wp["total_cost"] / amount * 100, 2) if amount > 0 else 0,
+                    "fx_markup": wp.get("fx_markup", 0),
+                    "speed": wp.get("speed", "Unknown"),
+                    "recipient_receives": wp.get("recipient_receives", round(amount - wp["total_cost"], 2)),
+                    "confidence": wp.get("confidence", "high"),
+                    "data_source": data_source,
+                    "exchange_rate": wp.get("exchange_rate", 0),
+                    "mid_market_rate": wp.get("mid_market_rate", 0),
+                    "fx_markup_pct": wp.get("fx_markup_pct", 0),
+                    "breakdown": {
+                        "transfer_fee": wp.get("fee", 0),
+                        "fx_markup_cost": wp.get("fx_markup", 0),
+                    },
+                })
+        else:
+            # Fallback to static provider fees
+            for provider_id, provider in PROVIDER_FEES.items():
+                corridor = provider["corridors"].get(destination_country, {})
+                fee_pct = corridor.get("fee_pct", provider["base_fee_pct"])
+                fx_markup = corridor.get("fx_markup", provider["fx_markup_pct"])
 
-            comparisons.append({
-                "provider": provider["name"],
-                "total_fee": round(total_fee, 2),
-                "fee_percentage": round(total_fee / amount * 100, 2) if amount > 0 else 0,
-                "fx_markup": round(fx_cost, 2),
-                "speed": provider["speed"],
-                "recipient_receives": round(amount - total_fee, 2),
-                "breakdown": {
-                    "transfer_fee": round(transfer_fee, 2),
-                    "fx_markup_cost": round(fx_cost, 2),
-                },
-            })
+                transfer_fee = max(amount * fee_pct, provider["min_fee"])
+                fx_cost = amount * fx_markup
+                total_fee = transfer_fee + fx_cost
+
+                comparisons.append({
+                    "provider": provider["name"],
+                    "total_fee": round(total_fee, 2),
+                    "fee_percentage": round(total_fee / amount * 100, 2) if amount > 0 else 0,
+                    "fx_markup": round(fx_cost, 2),
+                    "speed": provider["speed"],
+                    "recipient_receives": round(amount - total_fee, 2),
+                    "confidence": "medium",
+                    "data_source": "static",
+                    "breakdown": {
+                        "transfer_fee": round(transfer_fee, 2),
+                        "fx_markup_cost": round(fx_cost, 2),
+                    },
+                })
 
         # Sort by total fee (cheapest first)
         comparisons.sort(key=lambda x: x["total_fee"])
 
+        # Assign rankings
+        for i, comp in enumerate(comparisons):
+            comp["rank"] = i + 1
+
         # Calculate savings vs each provider
-        best_traditional = min(
-            (c for c in comparisons if c["provider"] != "CeloFlow"),
-            key=lambda x: x["total_fee"],
-            default=None,
-        )
-        worst_traditional = max(
-            (c for c in comparisons if c["provider"] != "CeloFlow"),
-            key=lambda x: x["total_fee"],
-            default=None,
-        )
+        traditional = [c for c in comparisons if c["provider"] != "CeloFlow"]
+        best_traditional = min(traditional, key=lambda x: x["total_fee"], default=None)
+        worst_traditional = max(traditional, key=lambda x: x["total_fee"], default=None)
 
         savings_vs_best = round(
             best_traditional["total_fee"] - cf_fee, 2
@@ -221,10 +298,16 @@ class FeeComparisonService:
             "recommendation": self._generate_recommendation(
                 cf_fee, comparisons, amount
             ),
+            "data_source": data_source,
+            "last_updated": last_updated,
+            "provider_count": len(comparisons),
         }
 
-        # Cache and record
-        self._set_cached(cache_key, result)
+        # Cache with appropriate TTL
+        if data_source in ("realtime", "cache"):
+            self._set_realtime_cached(cache_key, result)
+        else:
+            self._set_cached(cache_key, result)
         self._record_historical(result)
 
         return result
@@ -333,18 +416,121 @@ class FeeComparisonService:
             f"However, CeloFlow offers instant settlement and blockchain transparency."
         )
 
+    # ------------------------------------------------------------------
+    # Public: monitor_fee_changes
+    # ------------------------------------------------------------------
+
+    async def monitor_fee_changes(
+        self,
+        amount: float,
+        from_currency: str,
+        destination_country: str,
+    ) -> Dict[str, Any]:
+        """Track fee variations and provide trend analysis.
+
+        Args:
+            amount: Transfer amount
+            from_currency: Source currency code
+            destination_country: Destination country name
+
+        Returns:
+            Fee trend data with change indicators and recommendations
+        """
+        current = await self.compare_fees(
+            amount, from_currency, destination_country, prefer_realtime=True
+        )
+
+        # Record for monitoring
+        monitor_entry = {
+            "timestamp": time.time(),
+            "amount": amount,
+            "destination_country": destination_country,
+            "data_source": current.get("data_source", "unknown"),
+            "celoflow_fee": next(
+                (c["total_fee"] for c in current["comparisons"] if c["provider"] == "CeloFlow"),
+                0,
+            ),
+            "cheapest_traditional": min(
+                (c["total_fee"] for c in current["comparisons"] if c["provider"] != "CeloFlow"),
+                default=0,
+            ),
+            "provider_fees": {
+                c["provider"]: c["total_fee"] for c in current["comparisons"]
+            },
+        }
+        self._fee_monitor_data.append(monitor_entry)
+
+        # Keep last 500 entries
+        if len(self._fee_monitor_data) > 500:
+            self._fee_monitor_data = self._fee_monitor_data[-500:]
+
+        # Analyze trends for this corridor
+        corridor_data = [
+            e for e in self._fee_monitor_data
+            if e["destination_country"] == destination_country
+        ]
+
+        trend = "stable"
+        change_pct = 0.0
+        if len(corridor_data) >= 2:
+            prev = corridor_data[-2]["cheapest_traditional"]
+            curr = corridor_data[-1]["cheapest_traditional"]
+            if prev > 0:
+                change_pct = round((curr - prev) / prev * 100, 2)
+                if change_pct > 2:
+                    trend = "increasing"
+                elif change_pct < -2:
+                    trend = "decreasing"
+
+        recommendations: List[str] = []
+        if trend == "increasing":
+            recommendations.append(
+                "Traditional provider fees are rising. CeloFlow offers stable, low fees."
+            )
+        elif trend == "decreasing":
+            recommendations.append(
+                "Traditional fees are dropping, but CeloFlow still offers instant settlement."
+            )
+
+        return {
+            "current_comparison": current,
+            "trend": trend,
+            "change_pct": change_pct,
+            "data_points": len(corridor_data),
+            "recommendations": recommendations,
+            "last_checked": time.time(),
+        }
+
+    # ------------------------------------------------------------------
+    # Private helpers
+    # ------------------------------------------------------------------
+
     def _get_cached(self, key: str) -> Optional[Dict[str, Any]]:
-        """Get cached comparison result."""
+        """Get cached comparison result (static data)."""
         cached = self._cache.get(key)
         if cached and cached["expires_at"] > time.time():
             return cached["data"]
         return None
 
     def _set_cached(self, key: str, data: Dict[str, Any]) -> None:
-        """Cache a comparison result."""
+        """Cache a comparison result (static data, longer TTL)."""
         self._cache[key] = {
             "data": data,
             "expires_at": time.time() + FEE_CACHE_TTL,
+        }
+
+    def _get_realtime_cached(self, key: str) -> Optional[Dict[str, Any]]:
+        """Get cached real-time comparison result (shorter TTL)."""
+        cached = self._realtime_cache.get(key)
+        if cached and cached["expires_at"] > time.time():
+            return cached["data"]
+        return None
+
+    def _set_realtime_cached(self, key: str, data: Dict[str, Any]) -> None:
+        """Cache a real-time comparison result (shorter TTL)."""
+        self._realtime_cache[key] = {
+            "data": data,
+            "expires_at": time.time() + REALTIME_CACHE_TTL,
         }
 
     def _record_historical(self, data: Dict[str, Any]) -> None:
@@ -353,6 +539,7 @@ class FeeComparisonService:
             "timestamp": time.time(),
             "amount": data["amount"],
             "destination_country": data["destination_country"],
+            "data_source": data.get("data_source", "static"),
             "celoflow_fee": data["comparisons"][0]["total_fee"]
             if data["comparisons"] and data["comparisons"][0]["provider"] == "CeloFlow"
             else 0,

@@ -31,6 +31,9 @@ from services.language_detection import LanguageDetectionService
 from services.translation_service import TranslationService
 from services.reputation_analytics import ReputationAnalyticsService
 
+# Integrations
+from integrations.wise_client import WiseClient
+
 # Tools
 from tools import remittance_tools
 from agents import set_tracing_disabled
@@ -89,10 +92,14 @@ Detect dialect variations (e.g., Mexican Spanish vs Spain Spanish) and adapt.
 - High-risk jurisdictions are automatically flagged.
 - All screening results are cached and audited.
 
-## Fee Comparison
+## Fee Comparison (Real-time via Wise API)
 - Always show fee comparisons with traditional providers when discussing transfers.
-- Use `compare_fees_with_providers` to get real-time comparisons.
-- Highlight savings vs traditional services prominently.
+- Use `compare_fees_with_providers` to get real-time comparisons from the Wise API.
+- Data includes confidence scores: "high" for real-time API data, "medium" for static fallback.
+- Show the data source (realtime/static) and last updated timestamp for transparency.
+- Highlight savings vs traditional services prominently with rankings.
+- Use `monitor_fee_changes` to track fee trends for popular corridors.
+- If real-time data is unavailable, the system automatically falls back to static data.
 
 ## Interaction Style
 - Be concise and helpful.
@@ -164,8 +171,16 @@ def create_agent() -> Agent:
         compliance_fee_usdt=float(os.getenv("COMPLIANCE_FEE_USDT", "0.10")),
     )
 
+    # Wise API Client
+    wise_client = WiseClient(
+        api_key=os.getenv("WISE_API_KEY"),
+        base_url=os.getenv("WISE_API_URL"),
+        sandbox_url=os.getenv("WISE_SANDBOX_API_URL"),
+        use_sandbox=os.getenv("WISE_USE_SANDBOX", "true").lower() == "true",
+    )
+
     # Services (non-plugin, used by tools)
-    fee_comparison_service = FeeComparisonService()
+    fee_comparison_service = FeeComparisonService(wise_client=wise_client)
     language_detection_service = LanguageDetectionService(
         default_language=os.getenv("DEFAULT_LANGUAGE", "en"),
     )
@@ -199,6 +214,7 @@ def create_agent() -> Agent:
         kyc=kyc_plugin,
         compliance_agent=compliance_agent_plugin,
         fee_comparison=fee_comparison_service,
+        wise=wise_client,
     )
 
     # ── Collect plugins ──────────────────────────────────────────
@@ -231,6 +247,7 @@ def create_agent() -> Agent:
             remittance_tools.execute_transfer,
             remittance_tools.get_wallet_balance,
             remittance_tools.compare_fees_with_providers,
+            remittance_tools.monitor_fee_changes,
         ],
         plugins=plugins,
     )

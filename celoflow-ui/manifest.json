@@ -7,9 +7,10 @@
   "theme_color": "#35D07F",
   "icons": [
     {
-      "src": "https://raw.githubusercontent.com/celo-org/celo-branding/master/icons/celo_glyph_color.png",
-      "sizes": "512x512",
-      "type": "image/png"
+      "src": "/icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
     }
   ]
 }

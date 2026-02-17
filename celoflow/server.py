@@ -58,8 +58,8 @@ async def mcp_metadata():
             "prompts": ["remittance_assistance"]
         },
         "endpoints": {
-            "mcp": os.getenv("MCP_ENDPOINT", "https://api.celoflow.com/mcp"),
-            "http": os.getenv("API_BASE_URL", "https://api.celoflow.com")
+            "mcp": os.getenv("MCP_ENDPOINT", "https://api-cflw.contextwise.xyz/mcp"),
+            "http": os.getenv("API_BASE_URL", "https://api-cflw.contextwise.xyz")
         },
         "cors": {
             "allowed_origins": ["*"],

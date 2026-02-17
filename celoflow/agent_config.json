@@ -58,8 +58,8 @@
     "mcp": {
       "enabled": true,
       "endpoints": {
-        "mcp": "https://api.celoflow.com/mcp",
-        "oasp": "https://api.celoflow.com/.well-known/oasp.json" 
+        "mcp": "https://api-cflw.contextwise.xyz/mcp",
+        "oasp": "https://api-cflw.contextwise.xyz/.well-known/oasp.json" 
       },
       "capabilities": {
         "tools": [
