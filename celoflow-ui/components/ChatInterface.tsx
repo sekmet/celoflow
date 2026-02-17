@@ -64,7 +64,7 @@ function isAbortError(error: unknown): boolean {
 }
 
 export const ChatInterface: React.FC<ChatInterfaceProps> = ({ className = '', fullScreen = false }) => {
-  const { t } = useI18n();
+  const { t, language } = useI18n();
   const [messages, setMessages] = useState<Message[]>([
     {
       id: '1',
@@ -75,18 +75,23 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ className = '', fu
   ]);
 
   // Update initial message when language changes
+  const welcomeMessageKey = 'Hi! I\'m CeloFlow. I can help you send money globally using the Celo blockchain. Where would you like to send money today?';
+  
   useEffect(() => {
     setMessages(prev => {
       const updated = [...prev];
       if (updated.length > 0 && updated[0].id === '1') {
-        updated[0] = {
-          ...updated[0],
-          content: t('Hi! I\'m CeloFlow. I can help you send money globally using the Celo blockchain. Where would you like to send money today?')
-        };
+        const newContent = t(welcomeMessageKey);
+        if (updated[0].content !== newContent) {
+          updated[0] = {
+            ...updated[0],
+            content: newContent
+          };
+        }
       }
       return updated;
     });
-  }, [t]);
+  }, [language]); // Depend on language, not t function
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);

@@ -63,12 +63,22 @@ function generateId(): string {
 
 async function getDatabase(): Promise<RxDatabase<ContactsCollections>> {
   if (!databasePromise) {
-    databasePromise = createRxDatabase<ContactsCollections>({
-      name: DATABASE_NAME,
-      storage: getRxStorageDexie(),
-      multiInstance: false,
-      ignoreDuplicate: true,
-    });
+    databasePromise = (async () => {
+      try {
+        const db = await createRxDatabase<ContactsCollections>({
+          name: DATABASE_NAME,
+          storage: getRxStorageDexie(),
+          multiInstance: false,
+          ignoreDuplicate: true,
+        });
+        return db;
+      } catch (error) {
+        console.error('Failed to create RxDB database:', error);
+        // Reset promise to allow retry
+        databasePromise = null;
+        throw error;
+      }
+    })();
   }
 
   return databasePromise;
@@ -77,16 +87,23 @@ async function getDatabase(): Promise<RxDatabase<ContactsCollections>> {
 async function getContactsCollection(): Promise<RxCollection<Contact>> {
   if (!collectionPromise) {
     collectionPromise = (async () => {
-      const db = await getDatabase();
-      if (db.collections[COLLECTION_NAME]) return db.collections[COLLECTION_NAME] as RxCollection<Contact>;
+      try {
+        const db = await getDatabase();
+        if (db.collections[COLLECTION_NAME]) return db.collections[COLLECTION_NAME] as RxCollection<Contact>;
 
-      await db.addCollections({
-        contacts: {
-          schema: contactSchema,
-        },
-      });
+        await db.addCollections({
+          contacts: {
+            schema: contactSchema,
+          },
+        });
 
-      return db.collections[COLLECTION_NAME] as RxCollection<Contact>;
+        return db.collections[COLLECTION_NAME] as RxCollection<Contact>;
+      } catch (error) {
+        console.error('Failed to get or create contacts collection:', error);
+        // Reset promise to allow retry
+        collectionPromise = null;
+        throw error;
+      }
     })();
   }
 
