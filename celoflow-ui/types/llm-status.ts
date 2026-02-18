@@ -4,6 +4,13 @@ export type LLMStatus =
   | 'checking'     // Validating inputs/permissions  
   | 'finding'      // Searching for data
   | 'loading'      // Final response generation
+  | 'swapping'     // Auto-swap in progress
+  | 'transferring' // Transfer execution
+  | 'checking_balance' // Balance verification
+  | 'compliance_check' // KYC/compliance validation
+  | 'tee_verification' // TEE attestation
+  | 'kyc_check'    // KYC verification
+  | 'route_finding' // Finding optimal swap routes
   | 'error'        // Failure state
   | 'idle';        // No active operation
 
@@ -12,6 +19,16 @@ export interface LLMStatusState {
   message?: string;
   timestamp: number;
   operation?: string;
+  // Real-time operation details
+  amount?: string;
+  token?: string;
+  recipient?: string;
+  transactionHash?: string;
+  progress?: number; // 0.0 to 1.0
+  error?: string;
+  // Connection state for real-time updates
+  realTimeEnabled?: boolean;
+  connected?: boolean;
 }
 
 export interface StatusDetectionConfig {
@@ -21,7 +38,6 @@ export interface StatusDetectionConfig {
   checkingThreshold: number;
   findingThreshold: number;
   
-  // Content patterns for status detection
   statusPatterns: Record<LLMStatus, RegExp[]>;
   
   // Operation keywords for context
@@ -65,10 +81,48 @@ export const DEFAULT_STATUS_CONFIG: StatusDetectionConfig = {
       /(loading|generating|preparing|creating|building)/i,
       /(almost|just|nearly|almost done|ready)/i,
       /(finalizing|completing|finishing up)/i,
+      /(completed|done|finished|success)/i,
+    ],
+    swapping: [
+      /(auto-swap|swap|exchange|convert|hop1|hop2)/i,
+      /(swapping|exchanging|converting)/i,
+      /([A-Z]{3,6}|c[A-Z]{2,4}|[a-z]{2,4})\s*[-→]\s*([A-Z]{3,6}|c[A-Z]{2,4}|[a-z]{2,4})/i,
+      /(CELO.*USDm|USDm.*\w+)/i,
+    ],
+    transferring: [
+      /(transfer|send|pay|remittance|payment)/i,
+      /(ERC-20 transfer|transferring|sending)/i,
+      /(tx:|transaction|broadcast)/i,
+      /(transfer.*completed|sent.*successfully|payment.*successful)/i,
+    ],
+    checking_balance: [
+      /(balance.*but needs|pre-flight balance)/i,
+      /(check.*balance|verify.*balance)/i,
+      /(insufficient|not enough)/i,
+    ],
+    compliance_check: [
+      /(compliance|screening|sanction|aml)/i,
+      /(compliance.*check|screening.*check)/i,
+      /(risk.*assessment)/i,
+    ],
+    tee_verification: [
+      /(tee|attestation|trusted execution)/i,
+      /(tee.*verification|attestation.*check)/i,
+      /(secure.*enclave)/i,
+    ],
+    kyc_check: [
+      /(kyc|know your customer|identity)/i,
+      /(kyc.*check|identity.*verification)/i,
+      /(tier.*upgrade)/i,
+    ],
+    route_finding: [
+      /(find.*route|optimal.*route|route.*optimization)/i,
+      /(best.*path|efficient.*swap)/i,
+      /(mento.*route)/i,
     ],
     error: [
       /(error|failed|unable|cannot|sorry|unfortunately)/i,
-      /(issue|problem|trouble|difficulty)/i,
+      /(issue|problem|trouble|difficulty|reverted)/i,
     ],
     idle: [],
   },

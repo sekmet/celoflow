@@ -3,12 +3,16 @@
 import json
 import logging
 import os
+import time
+import asyncio
 from contextlib import asynccontextmanager
 from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.middleware.cors import CORSMiddleware
 from starlette.types import ASGIApp, Receive, Scope, Send
+from starlette.concurrency import iterate_in_threadpool
 from dotenv import load_dotenv
 from services.fee_comparison_service import FeeComparisonService
 from services.language_detection import LanguageDetectionService
@@ -17,6 +21,7 @@ from services.reputation_analytics import ReputationAnalyticsService
 from services.wallet_context_service import wallet_context_service
 from services.contacts_context_service import contacts_context_service
 from services.auth_service import AuthService, AuthConfig
+from services.real_time_status import RealTimeStatusService
 from middleware.auth_middleware import AuthMiddleware
 
 # Contextwise imports
@@ -236,6 +241,11 @@ app.add_middleware(WalletContextMiddleware)
 # In Starlette, the LAST added middleware runs FIRST on incoming requests.
 app.add_middleware(AuthMiddleware, auth_service=auth_service)
 
+# 5. Initialize Real-time Status Service
+from services.real_time_status import real_time_status_service
+real_time_status_service.start_monitoring()
+logger.info("Real-time status monitoring started")
+
 # 5. Mount the MCP Server (Host) for external tools access
 # This exposes the "host" MCP server at /mcp (SSE)
 app.mount("/mcp", mcp_app.sse_app())
@@ -391,6 +401,104 @@ async def auth_status(request: Request):
             "tee_verified": auth_info.get("tee_verified", False),
             "scopes": auth_info.get("scopes", []),
         }
+    )
+
+
+# ------------------------------------------------------------------
+# Real-time Status Endpoints
+# ------------------------------------------------------------------
+
+@app.get("/status/stream")
+async def status_stream():
+    """Server-Sent Events endpoint for real-time operation status.
+    
+    Provides live updates of backend operations including:
+    - Auto-swaps (hop1/hop2 progress)
+    - Balance checks and token swaps
+    - Transfer execution with transaction details
+    - TEE attestation and compliance checks
+    """
+    async def event_generator():
+        # Subscribe to status updates
+        queue = await real_time_status_service.subscribe()
+        
+        try:
+            # Send initial connection event
+            connection_data = {
+                'type': 'connection',
+                'message': 'Real-time status connected',
+                'timestamp': time.time()
+            }
+            yield f"event: connected\ndata: {json.dumps(connection_data)}\n\n"
+            
+            # Send current status if available
+            current_status = real_time_status_service.get_current_status()
+            if current_status:
+                yield f"event: status\ndata: {json.dumps(current_status)}\n\n"
+            
+            # Listen for status updates
+            while True:
+                try:
+                    # Wait for status update with timeout
+                    status_event = await asyncio.wait_for(queue.get(), timeout=30.0)
+                    
+                    yield f"event: status\ndata: {json.dumps(status_event)}\n\n"
+                    
+                except asyncio.TimeoutError:
+                    # Send heartbeat every 30 seconds
+                    heartbeat_data = {
+                        'type': 'heartbeat',
+                        'timestamp': time.time()
+                    }
+                    yield f"event: heartbeat\ndata: {json.dumps(heartbeat_data)}\n\n"
+                    
+        except asyncio.CancelledError:
+            # Client disconnected
+            logger.info("Status stream client disconnected")
+            
+        finally:
+            # Clean up subscription
+            real_time_status_service.unsubscribe(queue)
+    
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Headers": "Cache-Control",
+        }
+    )
+
+
+@app.get("/status/current")
+async def status_current():
+    """Get current operation status."""
+    current_status = real_time_status_service.get_current_status()
+    return JSONResponse(
+        content={
+            "current": current_status,
+            "timestamp": time.time()
+        },
+        headers={"Access-Control-Allow-Origin": "*"}
+    )
+
+
+@app.get("/status/history")
+async def status_history(limit: int = 50):
+    """Get recent status history."""
+    if limit > 200:
+        limit = 200  # Cap maximum history
+    
+    history = real_time_status_service.get_status_history(limit)
+    return JSONResponse(
+        content={
+            "history": history,
+            "count": len(history),
+            "timestamp": time.time()
+        },
+        headers={"Access-Control-Allow-Origin": "*"}
     )
 
 

@@ -59,7 +59,7 @@ class AuthConfig:
 
         public_paths_raw = os.getenv(
             "AUTH_PUBLIC_PATHS",
-            "/health,/.well-known/mcp.json,/.well-known/oasp.json,/.well-known/agent-card.json,/auth/login,/auth/refresh,/auth/attestation,/docs,/openapi.json",
+            "/health,/.well-known/mcp.json,/.well-known/oasp.json,/.well-known/agent-card.json,/auth/login,/auth/refresh,/auth/attestation,/docs,/openapi.json,/status/stream,/status/current,/status/history",
         )
         public_paths = [p.strip() for p in public_paths_raw.split(",") if p.strip()]
 
