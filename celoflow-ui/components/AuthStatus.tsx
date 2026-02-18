@@ -98,9 +98,9 @@ export function AuthStatus({ walletAddress }: AuthStatusProps) {
         title={authState.teeVerified ? t('TEE Verified') : t('Authenticated')}
       >
         {authState.teeVerified ? (
-          <ShieldCheck className="w-4 h-4 text-green-500" />
+          <ShieldCheck className="w-6 h-6 text-green-500" />
         ) : (
-          <Shield className="w-4 h-4 text-blue-500" />
+          <Shield className="w-6 h-6 text-blue-500" />
         )}
       </button>
 
@@ -119,7 +119,7 @@ export function AuthStatus({ walletAddress }: AuthStatusProps) {
               </div>
               {authState.teeVerified && (
                 <div className="flex items-center gap-2">
-                  <ShieldCheck className="w-3 h-3 text-green-500" />
+                  <ShieldCheck className="w-6 h-6 text-green-500" />
                   <span className="text-green-600 dark:text-green-400">{t('TEE Verified')}</span>
                 </div>
               )}
@@ -133,21 +133,21 @@ export function AuthStatus({ walletAddress }: AuthStatusProps) {
                 onClick={handleRefresh}
                 className="w-full flex items-center gap-2 px-2 py-1.5 text-xs text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 rounded-lg transition-colors"
               >
-                <RefreshCw className="w-3 h-3" />
+                <RefreshCw className="w-6 h-6" />
                 {t('Refresh Token')}
               </button>
               <button
                 onClick={handleLogout}
                 className="w-full flex items-center gap-2 px-2 py-1.5 text-xs text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"
               >
-                <LogOut className="w-3 h-3" />
+                <LogOut className="w-6 h-6" />
                 {t('Disconnect')}
               </button>
               <button
                 onClick={handleClearData}
                 className="w-full flex items-center gap-2 px-2 py-1.5 text-xs text-orange-600 dark:text-orange-400 hover:bg-orange-50 dark:hover:bg-orange-900/20 rounded-lg transition-colors"
               >
-                <ShieldAlert className="w-3 h-3" />
+                <ShieldAlert className="w-6 h-6" />
                 {t('Clear Data')}
               </button>
             </div>

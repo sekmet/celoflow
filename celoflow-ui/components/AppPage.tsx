@@ -1,12 +1,14 @@
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowLeft, Moon, Sun, Users } from 'lucide-react';
+import { ArrowLeft, Moon, Sun, Users, CalendarClock, Settings } from 'lucide-react';
 import { useAccount } from 'wagmi';
 import { ChatInterface } from './ChatInterface';
 import { WalletConnect } from './WalletConnect';
 import { ContactsManager } from './ContactsManager';
 import { LanguageSwitcher } from './LanguageSwitcher';
-import { AuthStatus } from './AuthStatus';
+import { RecurringTransfers } from './RecurringTransfers';
+import { SettingsPage } from './SettingsPage';
+import { AgentEarnings } from './AgentEarnings';
 
 interface AppPageProps {
   isDark: boolean;
@@ -15,7 +17,11 @@ interface AppPageProps {
 
 export const AppPage: React.FC<AppPageProps> = ({ isDark, setIsDark }) => {
   const [showContacts, setShowContacts] = useState(false);
+  const [showRecurring, setShowRecurring] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
   const { address: walletAddress } = useAccount();
+
+  const userId = walletAddress ?? 'default';
 
   return (
     <div className="min-h-screen flex flex-col font-sans bg-gray-50 dark:bg-gray-900 transition-colors duration-300">
@@ -25,8 +31,8 @@ export const AppPage: React.FC<AppPageProps> = ({ isDark, setIsDark }) => {
               <div className="p-1.5 rounded-lg bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 group-hover:bg-gray-200 dark:group-hover:bg-gray-700 transition-colors">
                  <ArrowLeft className="w-5 h-5" />
               </div>
-              <span className="font-display font-bold text-xl tracking-tight text-gray-900 dark:text-white group-hover:opacity-80 transition-opacity">CeloFlow</span>
             </Link>
+            <AgentEarnings />
           </div>
           <div className="flex items-center gap-3">
                <button
@@ -36,9 +42,22 @@ export const AppPage: React.FC<AppPageProps> = ({ isDark, setIsDark }) => {
                >
                   <Users className="w-5 h-5" />
                </button>
-               <LanguageSwitcher />
-               <AuthStatus walletAddress={walletAddress} />
+               <button
+                  onClick={() => setShowRecurring(true)}
+                  className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-gray-600 dark:text-gray-300"
+                  title="Recurring Transfers"
+               >
+                  <CalendarClock className="w-5 h-5" />
+               </button>
+               <button
+                  onClick={() => setShowSettings(true)}
+                  className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-gray-600 dark:text-gray-300"
+                  title="Settings"
+               >
+                  <Settings className="w-5 h-5" />
+               </button>
                <WalletConnect />
+               <LanguageSwitcher />               
                <button 
                   onClick={() => setIsDark(!isDark)}
                   className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-gray-600 dark:text-gray-300"
@@ -59,6 +78,18 @@ export const AppPage: React.FC<AppPageProps> = ({ isDark, setIsDark }) => {
            </div>
       </div>
       {showContacts && <ContactsManager onClose={() => setShowContacts(false)} />}
+      {showRecurring && (
+        <RecurringTransfers
+          userId={userId}
+          onClose={() => setShowRecurring(false)}
+        />
+      )}
+      {showSettings && (
+        <SettingsPage
+          userId={userId}
+          onClose={() => setShowSettings(false)}
+        />
+      )}
     </div>
   );
 };

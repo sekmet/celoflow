@@ -5,6 +5,7 @@ import "forge-std/Script.sol";
 import "../src/IdentityRegistry.sol";
 import "../src/ReputationRegistry.sol";
 import "../src/TEERegistry.sol";
+import "../src/AgentPaymentPool.sol";
 import "../src/mocks/MockTEEVerifier.sol";
 import "../src/interfaces/IIdentityRegistry.sol";
 
@@ -63,6 +64,7 @@ contract DeployScript is Script {
         address identityRegistry;
         address reputationRegistry;
         address teeRegistry;
+        address agentPaymentPool;
         address verifierAddress;
         address deployer;
         uint256 agentId;
@@ -95,19 +97,32 @@ contract DeployScript is Script {
         TEERegistry teeRegistry = new TEERegistry(address(identityRegistry));
         console.log(unicode"   ✅ TEERegistry deployed:", address(teeRegistry));
 
-        // 4. Deploy MockTEEVerifier (used for testing on testnet — no real DCAP verifier on Celo Sepolia)
-        console.log(unicode"\n🔐 4. Deploying MockTEEVerifier for testnet...");
+        // 4. Deploy AgentPaymentPool
+        console.log(unicode"\n💰 4. Deploying AgentPaymentPool...");
+        address usdmToken = 0xdE9e4C3ce781b4bA68120d6261cbad65ce0aB00b; // USDm on Celo Sepolia
+        uint256 baseRate = 1e16; // 0.01 USDm per transfer (18 decimals)
+        uint256 dailyCap = 100e18; // 100 USDm daily cap per agent
+        AgentPaymentPool agentPaymentPool = new AgentPaymentPool(
+            address(identityRegistry),
+            usdmToken,
+            baseRate,
+            dailyCap
+        );
+        console.log(unicode"   ✅ AgentPaymentPool deployed:", address(agentPaymentPool));
+
+        // 5. Deploy MockTEEVerifier (used for testing on testnet — no real DCAP verifier on Celo Sepolia)
+        console.log(unicode"\n🔐 5. Deploying MockTEEVerifier for testnet...");
         MockTEEVerifier mockVerifier = new MockTEEVerifier();
         address verifierAddress = address(mockVerifier);
         console.log(unicode"   ✅ MockTEEVerifier deployed:", verifierAddress);
 
-        // 5. Add MockTEEVerifier to TEERegistry
-        console.log(unicode"\n🔐 5. Adding MockTEEVerifier to TEERegistry...");
+        // 6. Add MockTEEVerifier to TEERegistry
+        console.log(unicode"\n🔐 6. Adding MockTEEVerifier to TEERegistry...");
         teeRegistry.addVerifier(verifierAddress, TDX_ARCH);
         console.log(unicode"   ✅ Mock verifier whitelisted:", verifierAddress);
 
-        // 6. Register a sample remittance agent
-        console.log(unicode"\n🤖 6. Registering Remittance Agent...");
+        // 7. Register a sample remittance agent
+        console.log(unicode"\n🤖 7. Registering Remittance Agent...");
 
         // Deploy RegistrationHelper (needed because register() mints NFT via _safeMint)
         RegistrationHelperSepolia helper = new RegistrationHelperSepolia();
@@ -116,20 +131,21 @@ contract DeployScript is Script {
         uint256 agentId = _registerSampleAgent(identityRegistry, helper, deployer);
         console.log(unicode"   ✅ Agent registered with ID:", agentId);
 
-        // 7. Set up sample TEE key for the agent
-        console.log(unicode"\n🔑 7. Setting up sample TEE key...");
+        // 8. Set up sample TEE key for the agent
+        console.log(unicode"\n🔑 8. Setting up sample TEE key...");
         _setupSampleTEEKey(teeRegistry, identityRegistry, agentId, verifierAddress, deployer);
         console.log(unicode"   ✅ Sample TEE key configured");
 
         vm.stopBroadcast();
 
-        // 8. Save deployment information
-        console.log(unicode"\n💾 8. Saving deployment information...");
+        // 9. Save deployment information
+        console.log(unicode"\n💾 9. Saving deployment information...");
 
         DeploymentInfo memory info = DeploymentInfo({
             identityRegistry: address(identityRegistry),
             reputationRegistry: address(reputationRegistry),
             teeRegistry: address(teeRegistry),
+            agentPaymentPool: address(agentPaymentPool),
             verifierAddress: verifierAddress,
             deployer: deployer,
             agentId: agentId,
@@ -244,6 +260,7 @@ contract DeployScript is Script {
         content = string.concat(content, "IDENTITY_REGISTRY=", vm.toString(info.identityRegistry), "\n");
         content = string.concat(content, "REPUTATION_REGISTRY=", vm.toString(info.reputationRegistry), "\n");
         content = string.concat(content, "TEE_REGISTRY=", vm.toString(info.teeRegistry), "\n");
+        content = string.concat(content, "AGENT_PAYMENT_POOL=", vm.toString(info.agentPaymentPool), "\n");
         content = string.concat(content, "MOCK_TEE_VERIFIER=", vm.toString(info.verifierAddress), "\n");
         content = string.concat(content, "DEPLOYER=", vm.toString(info.deployer), "\n");
         content = string.concat(content, "AGENT_ID=", vm.toString(info.agentId), "\n");
@@ -268,7 +285,8 @@ contract DeployScript is Script {
             '  "contracts": {\n',
             '    "IdentityRegistry": "', vm.toString(info.identityRegistry), '",\n',
             '    "ReputationRegistry": "', vm.toString(info.reputationRegistry), '",\n',
-            '    "TEERegistry": "', vm.toString(info.teeRegistry), '"\n',
+            '    "TEERegistry": "', vm.toString(info.teeRegistry), '",\n',
+            '    "AgentPaymentPool": "', vm.toString(info.agentPaymentPool), '"\n',
             '  },\n'
         );
 

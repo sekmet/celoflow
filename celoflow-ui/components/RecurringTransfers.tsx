@@ -1,16 +1,12 @@
-import React, { useState, useEffect } from 'react';
-import { Calendar, Clock, Trash2, Plus, RefreshCw, AlertCircle } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Calendar, Clock, Trash2, Plus, RefreshCw, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { useI18n } from '../lib/language';
-
-interface ScheduledTransfer {
-  id: string;
-  recipient: string;
-  amount: string;
-  currency: string;
-  frequency: string;
-  next_run: string;
-  user_id: string;
-}
+import {
+  getScheduledTransfers,
+  scheduleTransfer,
+  cancelScheduledTransfer,
+  ScheduledTransfer,
+} from '../services/recurringTransfersService';
 
 interface RecurringTransfersProps {
   agentBaseUrl?: string;
@@ -18,11 +14,12 @@ interface RecurringTransfersProps {
   onClose?: () => void;
 }
 
-export function RecurringTransfers({ agentBaseUrl = '', userId = '', onClose }: RecurringTransfersProps) {
+export function RecurringTransfers({ userId = 'default', onClose }: RecurringTransfersProps) {
   const { t } = useI18n();
   const [transfers, setTransfers] = useState<ScheduledTransfer[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
 
   // Form state
@@ -40,58 +37,41 @@ export function RecurringTransfers({ agentBaseUrl = '', userId = '', onClose }: 
 
   const currencies = ['USDm', 'EURm', 'BRLm', 'PHPm', 'XOFm', 'KESm', 'CELO'];
 
-  const fetchTransfers = async () => {
-    if (!agentBaseUrl || !userId) return;
+  const fetchTransfers = useCallback(async () => {
     setIsLoading(true);
     setError(null);
     try {
-      const res = await fetch(`${agentBaseUrl}/chat`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          messages: [{ role: 'user', content: `list_scheduled_transfers for user ${userId}` }],
-        }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (Array.isArray(data.transfers)) {
-          setTransfers(data.transfers);
-        }
-      }
-    } catch (e) {
-      setError(t('Failed to load scheduled transfers'));
+      const data = await getScheduledTransfers(userId);
+      setTransfers(data);
+    } catch {
+      setError('Failed to load scheduled transfers');
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [userId]);
 
   useEffect(() => {
     fetchTransfers();
-  }, [agentBaseUrl, userId]);
+  }, [fetchTransfers]);
 
   const handleSchedule = async () => {
     if (!recipient || !amount || !currency || !frequency) return;
     setIsLoading(true);
     setError(null);
     try {
-      const res = await fetch(`${agentBaseUrl}/chat`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          messages: [{
-            role: 'user',
-            content: `Schedule a ${frequency} transfer of ${amount} ${currency} to ${recipient}`,
-          }],
-        }),
-      });
-      if (res.ok) {
+      const result = await scheduleTransfer({ recipient, amount, currency, frequency, user_id: userId });
+      if (result.success) {
         setShowForm(false);
         setRecipient('');
         setAmount('');
+        setSuccessMsg('Transfer scheduled successfully');
+        setTimeout(() => setSuccessMsg(null), 3000);
         await fetchTransfers();
+      } else {
+        setError(result.message);
       }
-    } catch (e) {
-      setError(t('Failed to schedule transfer'));
+    } catch {
+      setError('Failed to schedule transfer');
     } finally {
       setIsLoading(false);
     }
@@ -100,16 +80,16 @@ export function RecurringTransfers({ agentBaseUrl = '', userId = '', onClose }: 
   const handleCancel = async (jobId: string) => {
     setIsLoading(true);
     try {
-      await fetch(`${agentBaseUrl}/chat`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          messages: [{ role: 'user', content: `Cancel scheduled transfer ${jobId}` }],
-        }),
-      });
-      await fetchTransfers();
-    } catch (e) {
-      setError(t('Failed to cancel transfer'));
+      const result = await cancelScheduledTransfer(jobId);
+      if (result.success) {
+        setTransfers((prev) => prev.filter((t) => t.id !== jobId));
+        setSuccessMsg('Transfer cancelled');
+        setTimeout(() => setSuccessMsg(null), 2000);
+      } else {
+        setError(result.message);
+      }
+    } catch {
+      setError('Failed to cancel transfer');
     } finally {
       setIsLoading(false);
     }
@@ -137,7 +117,7 @@ export function RecurringTransfers({ agentBaseUrl = '', userId = '', onClose }: 
             <h2 className="text-lg font-bold text-gray-900 dark:text-white">{t('Recurring Transfers')}</h2>
           </div>
           <div className="flex items-center gap-2">
-            <button onClick={fetchTransfers} className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors" title={t('Refresh')}>
+            <button onClick={fetchTransfers} className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors" title="Refresh">
               <RefreshCw className={`w-4 h-4 text-gray-500 ${isLoading ? 'animate-spin' : ''}`} />
             </button>
             {onClose && (
@@ -152,8 +132,15 @@ export function RecurringTransfers({ agentBaseUrl = '', userId = '', onClose }: 
         <div className="flex-1 overflow-y-auto p-6 space-y-4">
           {error && (
             <div className="flex items-center gap-2 p-3 rounded-lg bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300 text-sm">
-              <AlertCircle className="w-4 h-4 flex-shrink-0" />
+              <AlertCircle className="w-4 h-4 shrink-0" />
               {error}
+            </div>
+          )}
+
+          {successMsg && (
+            <div className="flex items-center gap-2 p-3 rounded-lg bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300 text-sm">
+              <CheckCircle2 className="w-4 h-4 shrink-0" />
+              {successMsg}
             </div>
           )}
 
@@ -185,7 +172,7 @@ export function RecurringTransfers({ agentBaseUrl = '', userId = '', onClose }: 
                 <button
                   onClick={() => handleCancel(transfer.id)}
                   className="p-2 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20 text-gray-400 hover:text-red-500 transition-colors"
-                  title={t('Cancel')}
+                  title="Cancel"
                 >
                   <Trash2 className="w-4 h-4" />
                 </button>

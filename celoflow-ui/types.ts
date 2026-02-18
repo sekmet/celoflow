@@ -24,6 +24,10 @@ export interface TransactionIntent {
   exchangeRate?: number;
   isRealTimeRate?: boolean;
   startDate?: string;
+  // User wallet signing result fields
+  txHash?: string;
+  explorerUrl?: string;
+  signerType?: 'tee' | 'user';
 }
 
 export interface TransactionHistoryItem {
@@ -111,4 +115,73 @@ export interface BalanceRefreshState {
   lastRefreshTime: Date;
   refreshError?: string;
   autoRefreshEnabled: boolean;
+}
+
+export interface ProviderComparison {
+  name: string;
+  total_fee: number;
+  fee_percentage: number;
+  speed: string;
+}
+
+export interface TransferFees {
+  network_fee: number;
+  network_fee_currency: string;
+  service_fee: number;
+  service_fee_currency: string;
+  service_fee_pct: number;
+  service_fee_tier: string;
+  total_fee_usd: number;
+  total_fee_pct: number;
+}
+
+export interface TransferRoute {
+  available: boolean;
+  from_currency?: string;
+  to_currency?: string;
+  amount?: number;
+  estimated_output?: number;
+  rate?: number;
+  route_type?: string;
+  slippage_pct?: number;
+  reason?: string;
+}
+
+export interface TEEBalance {
+  sufficient: boolean;
+  auto_swap_needed: boolean;
+  tee_address?: string;
+  token?: string;
+  balance?: number;
+  required?: number;
+  deficit?: number;
+}
+
+export interface SavingsInfo {
+  available: boolean;
+  celoflow_fee: number;
+  celoflow_fee_pct: number;
+  cheapest_provider?: string;
+  cheapest_provider_fee?: number;
+  savings_vs_cheapest?: number;
+  savings_vs_cheapest_pct?: number;
+  most_expensive_provider?: string;
+  savings_vs_most_expensive?: number;
+}
+
+export interface TransferPreview {
+  preview_id: string;
+  recipient: string;
+  amount: number;
+  token: string;
+  destination_country: string;
+  route: TransferRoute;
+  fees: TransferFees;
+  comparisons: ProviderComparison[];
+  savings: SavingsInfo;
+  tee_balance: TEEBalance;
+  created_at: number;
+  expires_at: number;
+  expires_in_seconds: number;
+  error?: string;
 }

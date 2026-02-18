@@ -5,6 +5,7 @@ import { useI18n } from '../lib/language';
 import { useTokenBalances } from '../hooks/useTokenBalances';
 import { TokenPortfolio } from './TokenPortfolio';
 import { tokenBalanceService } from '../services/tokenBalanceService';
+import { AuthStatus } from './AuthStatus';
 import { parseAbi } from 'viem';
 import { TokenBalance } from '../types';
 import { TOKEN_REGISTRY } from '../lib/token-registry';
@@ -256,8 +257,9 @@ export const WalletConnect: React.FC = () => {
                 </span>
                 <span className="flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
                   <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
-                  {chain?.name || (chain?.id === 42220 ? 'Celo Mainnet' : chain?.id === 44787 ? 'Celo Alfajores' : t('Unknown'))}
-                </span>
+                  {chain?.name || (chain?.id === 42220 ? 'Celo Mainnet' : chain?.id === 11142220 ? 'Celo Sepolia' : t('Unknown'))}
+                </span><br/>
+                <AuthStatus walletAddress={address} />
               </div>
               <div className="flex items-center justify-between">
                 <span className="font-mono text-sm text-gray-900 dark:text-white">

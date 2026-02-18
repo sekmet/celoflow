@@ -37,8 +37,7 @@ export const LanguageSwitcher: React.FC<LanguageSwitcherProps> = ({ onLanguageCh
         className="flex items-center gap-1.5 p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors text-gray-600 dark:text-gray-300"
         title={`${t('Language')}: ${current.name}`}
       >
-        <Globe className="w-5 h-5" />
-        <span className="text-xs font-medium hidden sm:inline">{current.flag}</span>
+        <span className="text-base font-medium inline">{current.flag}</span>
         <ChevronDown className={`w-3 h-3 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
       </button>
 

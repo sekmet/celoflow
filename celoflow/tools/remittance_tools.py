@@ -7,6 +7,7 @@ from decimal import Decimal
 from typing import Any, Dict
 
 from agents import function_tool
+from services.real_time_status import real_time_status_service, StatusEvent, OperationType
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +25,9 @@ _wise_client: Any = None
 _intent_parsing_service: Any = None
 _route_optimization_service: Any = None
 _x402_client: Any = None
+_payment_reward_service: Any = None
+_transfer_preview_service: Any = None
+_tee_wallet_service: Any = None
 
 
 def set_plugins(
@@ -40,13 +44,17 @@ def set_plugins(
     intent_parsing: Any = None,
     route_optimization: Any = None,
     x402: Any = None,
+    payment_reward: Any = None,
+    transfer_preview: Any = None,
+    tee_wallet: Any = None,
 ) -> None:
     """Wire up plugin references for tools to use."""
     global _mento_plugin, _tee_plugin, _remittance_plugin
     global _compliance_plugin, _notification_plugin, _registry_plugin
     global _kyc_plugin, _compliance_agent_plugin, _fee_comparison_service
     global _wise_client, _intent_parsing_service, _route_optimization_service
-    global _x402_client
+    global _x402_client, _payment_reward_service, _transfer_preview_service
+    global _tee_wallet_service
     _mento_plugin = mento
     _tee_plugin = tee
     _remittance_plugin = remittance
@@ -60,6 +68,9 @@ def set_plugins(
     _intent_parsing_service = intent_parsing
     _route_optimization_service = route_optimization
     _x402_client = x402
+    _payment_reward_service = payment_reward
+    _transfer_preview_service = transfer_preview
+    _tee_wallet_service = tee_wallet
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -349,6 +360,32 @@ async def get_current_wallet_context() -> str:
     })
 
 # ═══════════════════════════════════════════════════════════════════
+# Helper: emit real-time status for auto-swap progress
+# ═══════════════════════════════════════════════════════════════════
+
+async def _emit_swap_status(
+    operation: str,
+    message: str,
+    progress: float = 0.0,
+    token: str = "",
+    tx_hash: str = "",
+) -> None:
+    """Broadcast a real-time status event for auto-swap progress."""
+    try:
+        event = StatusEvent(
+            operation=OperationType.SWAPPING,
+            message=message,
+            progress=progress,
+            token=token,
+            transaction_hash=tx_hash or None,
+            details={"auto_swap": True, "step": operation},
+        )
+        await real_time_status_service.broadcast_status(event)
+    except Exception as e:
+        logger.debug("Failed to emit swap status: %s", e)
+
+
+# ═══════════════════════════════════════════════════════════════════
 # Helper: auto-swap CELO → target token when agent wallet is short
 # ═══════════════════════════════════════════════════════════════════
 
@@ -415,6 +452,7 @@ async def _auto_swap_for_token(
         if quote > 0:
             celo_amount = int(celo_amount * deficit_wei / quote * 1.1)  # 10% extra
         logger.info("Auto-swap: %s CELO -> USDm (need %s USDm)", celo_amount / 1e18, deficit_wei / 1e18)
+        await _emit_swap_status("swapping", f"Auto-swapping {celo_amount/1e18:.4f} CELO → USDm", progress=0.3, token="USDm")
 
         celo_c = w3.eth.contract(address=CELO_ADDR, abi=ERC20_ABI)
         tx = celo_c.functions.approve(BROKER, celo_amount).build_transaction(
@@ -432,6 +470,7 @@ async def _auto_swap_for_token(
         if s != 1:
             return {"error": f"CELO→USDm swap reverted (tx: {h})"}
 
+        await _emit_swap_status("swapping", f"Auto-swap complete: CELO → USDm", progress=1.0, token="USDm")
         return {"summary": f"Swapped {celo_amount/1e18:.4f} CELO → USDm"}
 
     else:
@@ -453,6 +492,7 @@ async def _auto_swap_for_token(
             return {"error": f"Mento pool {pair_key} returned 0. Pool may be paused."}
         usdm_needed = int(test_usdm * deficit_wei / test_out * 1.1)  # 10% buffer
         logger.info("Auto-swap hop1: need ~%s USDm for %s %s", usdm_needed / 1e18, deficit_wei / (10**target_decimals), target_symbol)
+        await _emit_swap_status("swapping", f"Auto-swap hop 1/2: CELO → USDm (need ~{usdm_needed/1e18:.2f} USDm)", progress=0.1, token=target_symbol)
 
         # Step 2: Figure out how much CELO we need for that USDm
         test_celo = int(5 * 1e18)  # 5 CELO
@@ -487,6 +527,7 @@ async def _auto_swap_for_token(
         if s != 1:
             return {"error": f"CELO→USDm swap reverted (tx: {h1})"}
         logger.info("Auto-swap hop1 done: CELO→USDm tx=%s", h1)
+        await _emit_swap_status("swapping", f"Hop 1/2 complete: CELO → USDm (tx: {h1[:10]}...)", progress=0.5, token=target_symbol)
 
         # Hop 2: USDm → target
         import time; time.sleep(2)  # Wait for balance to settle
@@ -511,6 +552,7 @@ async def _auto_swap_for_token(
         if s != 1:
             return {"error": f"USDm→{target_symbol} swap reverted (tx: {h2})"}
         logger.info("Auto-swap hop2 done: USDm→%s tx=%s", target_symbol, h2)
+        await _emit_swap_status("swapping", f"Hop 2/2 complete: USDm → {target_symbol} (tx: {h2[:10]}...)", progress=1.0, token=target_symbol)
 
         return {"summary": f"Swapped {celo_needed/1e18:.4f} CELO → USDm → {target_symbol} (2 hops)"}
 
@@ -526,20 +568,26 @@ async def send_token(
     token: str,
     user_id: str = "unknown",
 ) -> str:
-    """Send an ERC-20 token directly to a recipient address on Celo (no swap).
+    """Send an ERC-20 token to a recipient address on Celo with automatic auto-swap.
 
-    Use this when the user wants to send a token they already hold to someone,
-    e.g. "Send 1 BRLm to Charles" or "Transfer 5 cUSD to 0x...".
-    This does NOT perform a currency swap — it sends the exact token.
+    Use this for ALL token transfers. If the agent wallet lacks the target token,
+    it automatically swaps CELO → USDm → target token via Mento v2.
+    Supports all 19 tokens: USDm, EURm, BRLm, KESm, XOFm, PHPm, COPm, GBPm,
+    CADm, AUDm, ZARm, GHSm, NGNm, JPYm, CHFm, CELO, USDT, axlUSDC.
+
+    Examples:
+    - "Send 1 ZARm to 0x..." → auto-swaps CELO→USDm→ZARm if needed
+    - "Send 5 KESm to 0x..." → auto-swaps CELO→USDm→KESm if needed
+    - "Send 0.5 CELO to 0x..." → direct transfer (no swap needed)
 
     Args:
         recipient_address: Wallet address of the recipient (0x...)
         amount: Amount of tokens to send
-        token: Token symbol (e.g. BRLm, cUSD, USDm, CELO, etc.)
+        token: Token symbol (e.g. BRLm, ZARm, USDm, CELO, etc.)
         user_id: The ID of the user initiating the transfer.
 
     Returns:
-        Transaction result with hash as JSON string
+        Transaction result with hash and explorer link as JSON string
     """
     import json
     from integrations.chain_config import ChainConfig
@@ -654,6 +702,11 @@ async def send_token(
                     "Agent wallet has %s but needs %s of %s — attempting auto-swap from CELO",
                     signer_balance / (10 ** decimals), amount, resolved_token,
                 )
+                await _emit_swap_status(
+                    "checking_balance",
+                    f"Insufficient {resolved_token} balance — initiating auto-swap from CELO",
+                    progress=0.0, token=resolved_token,
+                )
                 # Auto-swap: CELO -> USDm -> target token (two hops if needed)
                 try:
                     deficit_wei = amount_wei - signer_balance
@@ -711,6 +764,12 @@ async def send_token(
                     "tx_hash": tx_hex,
                 })
 
+            await _emit_swap_status(
+                "transferring",
+                f"Transfer complete: {amount} {resolved_token} → {recipient_address[:10]}...",
+                progress=1.0, token=resolved_token, tx_hash=tx_hex,
+            )
+
             result = {
                 "status": "success",
                 "tx_hash": tx_hex,
@@ -755,7 +814,114 @@ async def send_token(
         except Exception as e:
             logger.warning("Failed to record reputation: %s", e)
 
+    # 9. Process x402 payment reward for successful transfer
+    if _payment_reward_service and result.get("status") == "success":
+        try:
+            from integrations.chain_config import ChainConfig as _CC
+            _config = _CC.celo_sepolia()
+            _aliases = {"cUSD": "USDm", "cEUR": "EURm", "cREAL": "BRLm"}
+            _resolved = _aliases.get(token, token)
+            _decimals = 6 if any(s in _resolved for s in ["USDC", "USDT", "axlUSDC"]) else 18
+            _usd_equiv = amount  # 1:1 approximation for stablecoins
+            reward_result = await _payment_reward_service.process_transfer_reward(
+                agent_id=0,
+                transfer_amount=_usd_equiv,
+                success_status=True,
+                tx_hash=result.get("tx_hash"),
+                token=_resolved,
+            )
+            if reward_result.get("success"):
+                result["agent_reward"] = {
+                    "payment_id": reward_result.get("payment_id"),
+                    "reward_amount": reward_result.get("reward_amount"),
+                    "currency": reward_result.get("currency", "USDm"),
+                    "tier": reward_result.get("tier"),
+                }
+                logger.info(
+                    "Agent reward processed: %.4f USDm (tier=%s, payment_id=%s)",
+                    reward_result.get("reward_amount", 0),
+                    reward_result.get("tier"),
+                    reward_result.get("payment_id"),
+                )
+        except Exception as e:
+            logger.warning("Agent reward processing failed (non-blocking): %s", e)
+
     return json.dumps(result)
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Tool: preview_transfer
+# ═══════════════════════════════════════════════════════════════════
+
+@function_tool
+async def preview_transfer(
+    recipient_address: str,
+    amount: float,
+    token: str,
+    destination_country: str = "",
+    from_currency: str = "USD",
+    user_id: str = "unknown",
+) -> str:
+    """Preview a transfer before execution — Step 1 of the two-step transfer flow.
+
+    Shows optimal route, fee breakdown, traditional service comparisons,
+    and agent x402 service fee. Returns a preview_id valid for 30 seconds
+    that can be referenced when executing the transfer.
+
+    Use this BEFORE send_token when the user wants to see fees first,
+    or when showing a confirmation dialog with cost breakdown.
+
+    Args:
+        recipient_address: Recipient wallet address (0x...)
+        amount: Transfer amount
+        token: Token to send (e.g. BRLm, ZARm, USDm, CELO)
+        destination_country: Destination country for fee comparison (e.g. Brazil, Kenya)
+        from_currency: Source currency for comparison (e.g. USD)
+        user_id: User identifier
+
+    Returns:
+        Preview data with preview_id, route, fees, comparisons, and expiry as JSON string
+    """
+    import json
+
+    if not _transfer_preview_service:
+        return json.dumps({"error": "Transfer preview service not configured"})
+
+    result = await _transfer_preview_service.preview_transfer(
+        recipient=recipient_address,
+        amount=amount,
+        token=token,
+        destination_country=destination_country,
+        from_currency=from_currency,
+        user_id=user_id,
+    )
+    return json.dumps(result, default=str)
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Tool: get_agent_earnings
+# ═══════════════════════════════════════════════════════════════════
+
+@function_tool
+async def get_agent_earnings(agent_id: int = 0) -> str:
+    """Get earnings summary for the CeloFlow agent from x402 payment rewards.
+
+    Shows total earnings, current reputation tier, daily earnings,
+    and recent payment history from successful transfers.
+
+    Args:
+        agent_id: Agent identifier (default 0 for the main CeloFlow agent)
+
+    Returns:
+        Earnings summary with total, tier, multiplier, and recent payments as JSON string
+    """
+    import json
+
+    if not _payment_reward_service:
+        return json.dumps({"error": "Payment reward service not configured"})
+
+    result = _payment_reward_service.get_agent_earnings(agent_id)
+    return json.dumps(result, default=str)
 
 
 # ═══════════════════════════════════════════════════════════════════

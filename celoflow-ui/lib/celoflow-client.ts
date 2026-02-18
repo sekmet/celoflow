@@ -83,6 +83,7 @@ export interface StreamChatOptions {
   baseUrl?: string
   walletContext?: WalletContext
   contacts?: ContactData[]
+  userSettings?: any
   onContent?: OnStreamContentCallback
   onComplete?: (fullContent: string) => void
   onError?: (error: Error) => void
@@ -96,6 +97,7 @@ export interface SendChatOptions {
   baseUrl?: string
   walletContext?: WalletContext
   contacts?: ContactData[]
+  userSettings?: any
   signal?: AbortSignal
 }
 
@@ -119,6 +121,7 @@ export async function streamChat(options: StreamChatOptions): Promise<string> {
     baseUrl,
     walletContext,
     contacts,
+    userSettings,
     onContent,
     onComplete,
     onError,
@@ -133,12 +136,13 @@ export async function streamChat(options: StreamChatOptions): Promise<string> {
   const endpointBase = getBaseUrl(baseUrl)
 
   try {
-    // Prepare request body with wallet context and contacts
+    // Prepare request body with wallet context, contacts, and user settings
     const requestBody = {
       messages,
       conversation_id,
       ...(walletContext && { wallet_context: walletContext }),
       ...(contacts && contacts.length > 0 && { contacts }),
+      ...(userSettings && { user_settings: userSettings }),
     }
 
     // Get auth headers (auto-refreshes token if needed)
@@ -288,15 +292,16 @@ export async function streamChat(options: StreamChatOptions): Promise<string> {
  * Uses `POST /chat` and returns the full response content.
  */
 export async function sendChat(options: SendChatOptions): Promise<string> {
-  const { messages, conversation_id, baseUrl, walletContext, contacts, signal } = options
+  const { messages, conversation_id, baseUrl, walletContext, contacts, userSettings, signal } = options
   const endpointBase = getBaseUrl(baseUrl)
 
-  // Prepare request body with wallet context and contacts
+  // Prepare request body with wallet context, contacts, and user settings
   const requestBody = {
     messages,
     conversation_id,
     ...(walletContext && { wallet_context: walletContext }),
     ...(contacts && contacts.length > 0 && { contacts }),
+    ...(userSettings && { user_settings: userSettings }),
   }
 
   // Get auth headers (auto-refreshes token if needed)

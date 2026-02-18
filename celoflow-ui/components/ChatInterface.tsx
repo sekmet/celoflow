@@ -1,12 +1,18 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { Send, Bot, User, CheckCircle2, ChevronRight, Loader2, RefreshCcw, History, CalendarClock, X, Search, Activity, Zap, TrendingUp, AlertCircle, Mic, ChevronDown, Info, Ban, Share2, HelpCircle } from 'lucide-react';
+import { Send, Bot, CheckCircle2, ChevronRight, Loader2, RefreshCcw, History, CalendarClock, X, Search, Zap, TrendingUp, AlertCircle, Mic, ChevronDown, Info, Ban, Share2, Wallet } from 'lucide-react';
 import { useAccount } from 'wagmi';
 import { MarkdownContent } from './MarkdownContent';
 import { LLMStatusIndicator } from './LLMStatusIndicator';
+import { WalletAuthorizationModal } from './WalletAuthorizationModal';
+import { QuickTransferModal, type TransferCompletedResult } from './QuickTransferModal';
+import { TransferPreviewModal } from './TransferPreviewModal';
+import { useUserSigning } from '../hooks/useUserSigning';
 import { streamChat, type ChatMessage as CeloflowMessage, type WalletContext, type ContactData, type LLMStatusState } from '../lib/celoflow-client';
 import { getContacts } from '../services/contactsService';
 import { getExchangeRate } from '../services/currencyService';
-import { Message, TransactionIntent, TransactionHistoryItem } from '../types';
+import { addTransaction, updateTransactionStatus, getTransactionHistory, cancelTransaction } from '../services/transactionHistoryService';
+import { getUserSettings, UserSettings } from '../services/userSettingsService';
+import { Message, TransactionIntent, TransactionHistoryItem, TransferPreview } from '../types';
 import { SUGGESTED_PROMPTS, SUPPORTED_CURRENCIES } from '../constants';
 import { useI18n } from '../lib/language';
 
@@ -103,12 +109,25 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ className = '', fu
   const [llmStatus, setLlmStatus] = useState<LLMStatusState>({ status: 'idle', timestamp: Date.now() });
   const abortRef = useRef<AbortController | null>(null);
   const [showHistory, setShowHistory] = useState(false);
-  const [history, setHistory] = useState<TransactionHistoryItem[]>([]);
+  const [history, setHistory] = useState<TransactionHistoryItem[]>(() => getTransactionHistory());
   const [historySearch, setHistorySearch] = useState('');
   const [isListening, setIsListening] = useState(false);
   const [userCurrency, setUserCurrency] = useState('USD');
   const [localEstimates, setLocalEstimates] = useState<Record<string, { source: string, target: string }>>({});
   const [expandedFees, setExpandedFees] = useState<string | null>(null);
+  const [showWalletAuth, setShowWalletAuth] = useState(false);
+  const [pendingConfirmMsgId, setPendingConfirmMsgId] = useState<string | null>(null);
+  const [showQuickTransfer, setShowQuickTransfer] = useState(false);
+  const [userWalletTxHash, setUserWalletTxHash] = useState<string | null>(null);
+  const [showTransferPreview, setShowTransferPreview] = useState(false);
+  const [transferPreviewData, setTransferPreviewData] = useState<TransferPreview | null>(null);
+  const [isExecutingPreview, setIsExecutingPreview] = useState(false);
+
+  // User wallet signing hook
+  const userSigning = useUserSigning();
+
+  // User settings for fee comparison preference
+  const [userSettings, setUserSettings] = useState<UserSettings | null>(null);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
@@ -224,6 +243,36 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ className = '', fu
             console.warn('Could not detect local currency', e);
         }
     }
+  }, []);
+
+  // Load user settings on mount
+  useEffect(() => {
+    const loadUserSettings = async () => {
+      try {
+        const settings = await getUserSettings('default');
+        setUserSettings(settings);
+      } catch (error) {
+        console.warn('Failed to load user settings:', error);
+        // Use default settings as fallback
+        setUserSettings({
+          userId: 'default',
+          showFeeComparison: true,
+          defaultCurrency: 'USDm',
+          language: 'en',
+          theme: 'auto',
+          notifications: {
+            transfers: true,
+            recurring: true,
+            failures: true,
+          },
+          privacy: {
+            shareAnalytics: false,
+            saveHistory: true,
+          },
+        });
+      }
+    };
+    loadUserSettings();
   }, []);
 
   // Initialize Speech Recognition
@@ -384,6 +433,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ className = '', fu
         messages: chatMessages,
         walletContext,
         contacts: contactsData,
+        userSettings,
         signal: controller.signal,
         onContent: (fullContent) => {
           pendingContent = fullContent;
@@ -489,35 +539,63 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ className = '', fu
   };
 
   const handleConfirm = (transactionId: string) => {
-    // Generate a unique history ID
-    const historyId = Date.now().toString();
+    // If wallet is connected, show authorization choice modal
+    if (isConnected && address) {
+      setPendingConfirmMsgId(transactionId);
+      const msg = messages.find(m => m.id === transactionId);
+      if (msg?.transactionData) {
+        // Resolve recipient name → wallet address via contacts
+        const recipientRaw = msg.transactionData.recipient || '';
+        const isAddress = /^0x[0-9a-fA-F]{40}$/.test(recipientRaw.trim());
+        const resolveAndPrepare = async () => {
+          let recipientAddress = recipientRaw.trim();
+          if (!isAddress) {
+            try {
+              const allContacts = await getContacts();
+              const match = allContacts.find(
+                c => c.name.toLowerCase() === recipientRaw.toLowerCase().trim()
+              );
+              if (match) recipientAddress = match.address;
+            } catch {
+              // non-critical — fall through with raw value
+            }
+          }
+          await userSigning.prepare(
+            recipientAddress,
+            msg.transactionData!.amount || 0,
+            msg.transactionData!.recipientCurrency || msg.transactionData!.currency || 'USDm',
+          );
+          setShowWalletAuth(true);
+        };
+        resolveAndPrepare();
+      }
+      return;
+    }
 
+    // No wallet connected — use TEE agent wallet (original flow)
+    executeConfirmWithTEE(transactionId);
+  };
+
+  const executeConfirmWithTEE = (transactionId: string) => {
     setMessages(prev => {
         const updated = prev.map(msg => {
             if (msg.id === transactionId && msg.type === 'transaction_preview' && msg.transactionData) {
                 
-                // Determine initial status
                 const isRecurring = msg.transactionData.frequency && msg.transactionData.frequency !== 'one-time';
                 const initialStatus: TransactionHistoryItem['status'] = isRecurring ? 'scheduled' : 'processing';
 
-                // Add to history with processing/scheduled status
-                const historyItem: TransactionHistoryItem = {
-                    id: historyId,
-                    date: new Date().toLocaleDateString(),
-                    intent: msg.transactionData,
-                    status: initialStatus
-                };
-                setHistory(h => [historyItem, ...h]);
+                const historyItem = addTransaction(msg.transactionData, initialStatus);
+                setHistory(h => [historyItem, ...h.filter(i => i.id !== historyItem.id)]);
                 
-                // If it's a one-time transaction, simulate processing -> completed
                 if (!isRecurring) {
                     setTimeout(() => {
+                        updateTransactionStatus(historyItem.id, 'completed');
                         setHistory(currentHistory => currentHistory.map(item => 
-                            item.id === historyId && item.status !== 'cancelled'
+                            item.id === historyItem.id && item.status !== 'cancelled'
                                 ? { ...item, status: 'completed' } 
                                 : item
                         ));
-                    }, 4000); // 4 second delay to simulate blockchain confirmation
+                    }, 4000);
                 }
                 
                 return { ...msg, type: 'transaction_success' as const };
@@ -528,8 +606,158 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ className = '', fu
     });
   };
 
+  const handleChooseTEE = () => {
+    setShowWalletAuth(false);
+    if (pendingConfirmMsgId) {
+      executeConfirmWithTEE(pendingConfirmMsgId);
+      setPendingConfirmMsgId(null);
+    }
+    userSigning.reset();
+  };
+
+  const handleChooseUserWallet = async () => {
+    const result = await userSigning.signAndExecute();
+    if (result && result.status === 'success' && pendingConfirmMsgId) {
+      const txHash = result.tx_hash ?? '';
+      const explorerUrl = result.explorer_url ?? `https://sepolia.celoscan.io/tx/${txHash}`;
+      setUserWalletTxHash(txHash);
+      setMessages(prev => prev.map(msg => {
+        if (msg.id === pendingConfirmMsgId && msg.type === 'transaction_preview' && msg.transactionData) {
+          const historyItem = addTransaction(msg.transactionData, 'completed');
+          setHistory(h => [historyItem, ...h.filter(i => i.id !== historyItem.id)]);
+          return {
+            ...msg,
+            type: 'transaction_success' as const,
+            // Attach tx hash + signer info for the success card
+            transactionData: {
+              ...msg.transactionData,
+              txHash,
+              explorerUrl,
+              signerType: 'user' as const,
+            },
+          };
+        }
+        return msg;
+      }));
+      setPendingConfirmMsgId(null);
+      // Close the modal after a short delay so user sees the confirmed state
+      setTimeout(() => setShowWalletAuth(false), 1800);
+    }
+  };
+
+  const handleRetryWithTEE = () => {
+    setShowWalletAuth(false);
+    if (pendingConfirmMsgId) {
+      executeConfirmWithTEE(pendingConfirmMsgId);
+      setPendingConfirmMsgId(null);
+    }
+    userSigning.reset();
+  };
+
+  const handleCloseWalletAuth = () => {
+    setShowWalletAuth(false);
+    setPendingConfirmMsgId(null);
+    userSigning.reset();
+  };
+
+  const handleShowTransferPreview = useCallback(async (
+    recipientAddress: string,
+    amount: number,
+    token: string,
+    destinationCountry: string = '',
+  ) => {
+    try {
+      const response = await fetch('http://localhost:8000/transfer/preview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          recipient_address: recipientAddress,
+          amount,
+          token,
+          destination_country: destinationCountry,
+          from_currency: 'USD',
+          user_id: address ?? 'unknown',
+        }),
+      });
+      if (!response.ok) {
+        console.warn('Transfer preview failed:', response.status);
+        return null;
+      }
+      const preview = await response.json() as TransferPreview;
+      if (preview.error) {
+        console.warn('Transfer preview error:', preview.error);
+        return null;
+      }
+      setTransferPreviewData(preview);
+      setShowTransferPreview(true);
+      return preview;
+    } catch (err) {
+      console.warn('Failed to fetch transfer preview:', err);
+      return null;
+    }
+  }, [address]);
+
+  const handlePreviewConfirm = useCallback(async (previewId: string) => {
+    setIsExecutingPreview(true);
+    try {
+      const response = await fetch('http://localhost:8000/api/transfers/execute', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          recipient: transferPreviewData?.recipient,
+          amount: transferPreviewData?.amount,
+          currency: transferPreviewData?.token,
+          preview_id: previewId,
+          user_id: address ?? 'unknown',
+        }),
+      });
+      const result = await response.json() as { success: boolean; result?: string; error?: string };
+      if (result.success) {
+        const successMsg: Message = {
+          id: Date.now().toString(),
+          role: 'assistant',
+          content: `✅ Transfer complete! **${transferPreviewData?.amount} ${transferPreviewData?.token}** sent via TEE agent wallet. ${result.result ?? ''}`,
+          type: 'text',
+        };
+        setMessages(prev => [...prev, successMsg]);
+      } else {
+        const errMsg: Message = {
+          id: Date.now().toString(),
+          role: 'assistant',
+          content: `❌ Transfer failed: ${result.error ?? 'Unknown error'}`,
+          type: 'text',
+        };
+        setMessages(prev => [...prev, errMsg]);
+      }
+    } catch (err) {
+      console.error('Preview execution error:', err);
+    } finally {
+      setIsExecutingPreview(false);
+      setShowTransferPreview(false);
+      setTransferPreviewData(null);
+    }
+  }, [transferPreviewData, address]);
+
+  const handlePreviewCancel = useCallback(() => {
+    setShowTransferPreview(false);
+    setTransferPreviewData(null);
+    setIsExecutingPreview(false);
+  }, []);
+
+  const handleQuickTransferComplete = useCallback((result: TransferCompletedResult) => {
+    const successMsg = {
+      id: Date.now().toString(),
+      role: 'assistant' as const,
+      content: `✅ Transfer sent! **${result.amount} ${result.token}** to **${result.recipient}**. [View on CeloScan](${result.explorerUrl})`,
+      type: 'text' as const,
+    };
+    setMessages(prev => [...prev, successMsg]);
+    setShowQuickTransfer(false);
+  }, []);
+
   const handleCancelTransaction = (historyId: string) => {
       if (window.confirm(t('Are you sure you want to cancel this scheduled payment?'))) {
+          cancelTransaction(historyId);
           setHistory(prev => prev.map(item => 
               item.id === historyId ? { ...item, status: 'cancelled' } : item
           ));
@@ -940,9 +1168,33 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ className = '', fu
                                           })
                                     }
                                 </p>
+
+                                {/* Signer badge */}
+                                {msg.transactionData?.signerType && (
+                                    <div className={`mt-2 px-3 py-1 rounded-full text-xs font-semibold flex items-center gap-1.5 ${
+                                        msg.transactionData.signerType === 'user'
+                                            ? 'bg-celo-green/10 text-celo-green'
+                                            : 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400'
+                                    }`}>
+                                        <Wallet className="w-3 h-3" />
+                                        {msg.transactionData.signerType === 'user' ? t('Signed by your wallet') : t('Signed by agent wallet')}
+                                    </div>
+                                )}
+
+                                {/* Tx hash row */}
+                                {msg.transactionData?.txHash && (
+                                    <div className="mt-2 text-xs text-gray-400 font-mono">
+                                        {msg.transactionData.txHash.slice(0, 10)}…{msg.transactionData.txHash.slice(-8)}
+                                    </div>
+                                )}
                                 
                                 <div className="flex gap-2 mt-4 w-full">
-                                    <a href="#" className="flex-1 py-2 text-xs font-bold text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 border border-gray-200 dark:border-gray-700 rounded-lg flex items-center justify-center bg-white dark:bg-gray-800">
+                                    <a
+                                        href={msg.transactionData?.explorerUrl || '#'}
+                                        target={msg.transactionData?.explorerUrl ? '_blank' : undefined}
+                                        rel="noopener noreferrer"
+                                        className="flex-1 py-2 text-xs font-bold text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 border border-gray-200 dark:border-gray-700 rounded-lg flex items-center justify-center bg-white dark:bg-gray-800"
+                                    >
                                         {t('View on CeloScan')}
                                     </a>
                                     <button 
@@ -985,6 +1237,16 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ className = '', fu
                     ))}
                 </div>
             )}
+            {isConnected && (
+                <button
+                    onClick={() => setShowQuickTransfer(true)}
+                    className="w-full mb-2 py-2 flex items-center justify-center gap-2 bg-celo-green/10 hover:bg-celo-green/20 border border-celo-green/30 text-celo-green font-semibold rounded-xl text-sm transition-all"
+                    title={t('Send directly from your connected wallet')}
+                >
+                    <Wallet className="w-4 h-4" />
+                    {t('Send with Your Wallet')}
+                </button>
+            )}
             <div className="flex items-center gap-2 bg-gray-50 dark:bg-gray-700 rounded-xl p-2 border border-gray-200 dark:border-gray-600 focus-within:border-celo-green focus-within:ring-2 focus-within:ring-green-500/10 transition-all">
                 <button
                     onClick={toggleListening}
@@ -1011,6 +1273,36 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ className = '', fu
                 </button>
             </div>
         </div>
+
+        {/* Quick Transfer Modal */}
+        <QuickTransferModal
+          isOpen={showQuickTransfer}
+          onClose={() => setShowQuickTransfer(false)}
+          onTransferComplete={handleQuickTransferComplete}
+        />
+
+        {/* Transfer Preview Modal (two-step TEE flow) */}
+        {showTransferPreview && transferPreviewData && (
+          <TransferPreviewModal
+            previewData={transferPreviewData}
+            onConfirm={handlePreviewConfirm}
+            onCancel={handlePreviewCancel}
+            isExecuting={isExecutingPreview}
+          />
+        )}
+
+        {/* Wallet Authorization Modal */}
+        <WalletAuthorizationModal
+          isOpen={showWalletAuth}
+          onClose={handleCloseWalletAuth}
+          preparedTransfer={userSigning.preparedTransfer}
+          signingStep={userSigning.step}
+          error={userSigning.error}
+          isLoading={userSigning.isLoading}
+          onChooseTEE={handleChooseTEE}
+          onChooseUserWallet={handleChooseUserWallet}
+          onRetryWithTEE={handleRetryWithTEE}
+        />
     </div>
   );
 };

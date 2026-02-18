@@ -34,6 +34,9 @@ from services.wallet_context_service import wallet_context_service
 from services.contacts_context_service import contacts_context_service
 from services.intent_parsing_service import IntentParsingService
 from services.route_optimization_service import RouteOptimizationService
+from services.payment_reward_service import PaymentRewardService
+from services.transfer_preview_service import TransferPreviewService
+from services.tee_wallet_service import TEEWalletService
 
 # Integrations
 from integrations.wise_client import WiseClient
@@ -107,14 +110,17 @@ Example workflow:
 - **Check user wallet balances** to provide personalized transfer recommendations.
 
 ## CRITICAL: Choosing the Right Transfer Tool
-- **`send_token`**: Use when the user wants to send a token they already hold \
-  (e.g. "Send 1 BRLm to Charles", "Transfer 5 cUSD to 0x..."). This does a \
-  direct ERC-20 transfer — NO currency conversion.
-- **`execute_transfer`**: Use ONLY when the user wants to SWAP between different \
-  currencies (e.g. "Convert 100 cUSD to PHPm and send to Maria"). This uses \
-  the Mento v2 Broker for on-chain swaps.
-- When the user says "send X TokenA to Someone", ALWAYS use `send_token` \
-  (direct transfer). Only use `execute_transfer` if from_currency != to_currency.
+- **`send_token`**: Use for ALL token transfers — "Send 1 BRLm to Charles", \
+  "Transfer 5 ZARm to 0x...", etc. This tool has **built-in auto-swap**: if the \
+  agent wallet lacks the target token, it automatically swaps CELO → USDm → target \
+  token via Mento v2. Works for ALL 19 supported tokens. **Always try `send_token` first.**
+- **`execute_transfer`**: Use ONLY when the user explicitly wants to SWAP between \
+  different currencies AND receive the output (e.g. "Convert 100 cUSD to PHPm and \
+  send to Maria"). This uses the Mento v2 Broker for on-chain swaps.
+- When the user says "send X TokenA to Someone", ALWAYS use `send_token`. \
+  It will auto-swap from CELO if needed — do NOT suggest manual conversion.
+- **NEVER** tell the user they need to convert currencies manually. The auto-swap \
+  handles this transparently for any of the 19 supported tokens.
 
 ## KYC Verification
 - Users have KYC levels: none, basic, standard, enhanced.
@@ -144,29 +150,67 @@ Example workflow:
 - Map user references to "cUSD" as "USDm" internally (they are equivalent \
   on Celo Sepolia).
 
+## User Wallet Signing — Dual-Signer Architecture
+
+Users can authorize transfers in two ways. **Always mention both options** when presenting a transfer:
+
+### Option A — Agent Wallet (TEE, default)
+- The secure TEE-backed agent wallet signs and executes the transfer instantly.
+- No user action required beyond clicking "Confirm Transfer" in the UI.
+- Auto-swap is handled transparently by the agent.
+- Best for: speed, convenience, small amounts.
+
+### Option B — User's Own Wallet (MetaMask / WalletConnect)
+- The transfer is prepared as an unsigned transaction and sent to the user's connected wallet.
+- The user signs it directly in MetaMask or their wallet app.
+- The transaction is then broadcast from the **user's own address** — funds come from the user's wallet.
+- Best for: large amounts, full custody, transparency.
+
+### How to present transfers in chat
+When a user requests a transfer, after resolving the recipient and amount:
+1. Use `send_token` to execute via the agent wallet (TEE path).
+2. In your response, **always add a note** like:
+   > 💡 You can also sign this transfer directly with your connected wallet — click **"Authorize with Your Wallet"** in the confirmation dialog for full custody.
+3. If the user explicitly asks to use their own wallet, tell them to click "Authorize with Your Wallet" in the confirmation dialog that appears.
+4. If the user asks "what wallet signed this?" — explain the TEE agent wallet signed it unless they chose "Your Wallet" in the dialog.
+
 ## Transfer Execution Flow
-When a user requests a transfer (e.g. "Send 1 BRLm to Charles"):
+When a user requests a transfer (e.g. "Send 1 ZARm to Charles"):
 1. Resolve the recipient from the user's contacts to get their wallet address.
-2. Call `send_token` (same-token transfer) or `execute_transfer` (cross-currency swap).
-3. After the tool returns, show the tx hash and explorer link.
+2. Call `send_token` with the token, amount, and recipient address.
+3. `send_token` automatically handles auto-swap if the agent wallet lacks the token.
+4. After the tool returns, show the tx hash and explorer link.
+5. If auto-swap was triggered, mention it briefly (e.g. "Auto-swapped CELO → ZARm").
+6. Remind the user they can also use their own wallet for the next transfer.
 
 Guidelines:
-- "Send X token to Name" → use `send_token` with the contact's address.
+- "Send X token to Name" → ALWAYS use `send_token` with the contact's address.
 - "Convert X from A to B and send to Name" → use `execute_transfer`.
 - Execute transfers directly — the user expects immediate action without \
   extra confirmation steps.
 - If the user says "Confirm" or "Yes" to a pending transfer, execute it now.
+- **NEVER suggest manual currency conversion** — `send_token` auto-swaps automatically.
+- If user says "use my wallet" or "sign with my wallet" → tell them to click \
+  "Authorize with Your Wallet" in the confirmation dialog.
 
 If the user asks about your identity or trust, use the on-chain registry \
 tools to prove your registration and reputation.
 
-## Supported Tokens (Celo Sepolia)
-Direct transfers via `send_token`: USDm, EURm, BRLm, KESm, XOFm, PHPm, COPm, \
-GBPm, CADm, AUDm, ZARm, GHSm, NGNm, JPYm, CHFm, CELO, USDT, axlUSDC.
+## Supported Tokens (Celo Sepolia) — ALL have auto-swap support
+`send_token` supports ALL 19 tokens with automatic CELO → USDm → target auto-swap:
+- **Stablecoins**: USDm, EURm, BRLm, KESm, XOFm, PHPm, COPm, GBPm, CADm, AUDm, \
+  ZARm, GHSm, NGNm, JPYm, CHFm
+- **Native**: CELO
+- **Bridged**: USDT, axlUSDC
 
-## Supported Swap Corridors (Mento v2)
-cUSD (USDm) → PHPm (Philippines Peso), cUSD (USDm) → XOFm (West Africa CFA), \
-cUSD (USDm) → CELO (native token), cUSD (USDm) → axlUSDC (bridged USDC).
+## Auto-Swap Routes (Mento v2 — 17 pools, all via USDm hub)
+- **Single hop**: CELO → USDm (for USDm requests)
+- **Two hops**: CELO → USDm → [any of the other 16 tokens]
+- All 17 Mento v2 pools have USDm on one side: USDm/PHPm, USDm/axlUSDC, \
+  USDm/XOFm, USDm/CELO, USDm/EURm, USDm/AUDm, USDm/CADm, USDm/GBPm, \
+  USDm/ZARm, USDm/CHFm, USDm/JPYm, USDm/COPm, USDm/BRLm, USDm/GHSm, \
+  USDm/NGNm, USDm/KESm, USDm/USDT
+- Auto-swap is **transparent** — the user does not need to know about it.
 
 ## Agent Identity
 - Registered as Agent ID 0 on Celo Sepolia IdentityRegistry.
@@ -260,6 +304,28 @@ def create_agent() -> Agent:
         facilitator_url=os.getenv("X402_FACILITATOR_URL"),
     )
 
+    # Payment reward service (x402 reputation-based rewards)
+    payment_reward_service = PaymentRewardService(
+        x402_client=x402_client,
+        reputation_service=reputation_analytics,
+        daily_cap_usd=float(os.getenv("AGENT_DAILY_REWARD_CAP_USD", "100.0")),
+        agent_id=int(os.getenv("AGENT_ID", "0")),
+    )
+
+    # TEE wallet service (balance tracking and funding status)
+    tee_wallet_service = TEEWalletService(
+        tee_plugin=tee_plugin,
+        mento_plugin=mento_plugin,
+    )
+
+    # Transfer preview service (two-step transfer flow)
+    transfer_preview_service = TransferPreviewService(
+        mento_plugin=mento_plugin,
+        fee_comparison_service=fee_comparison_service,
+        payment_reward_service=payment_reward_service,
+        tee_plugin=tee_plugin,
+    )
+
     # Set up wallet context service with mento plugin
     wallet_context_service.set_mento_plugin(mento_plugin)
 
@@ -291,6 +357,9 @@ def create_agent() -> Agent:
         intent_parsing=intent_parsing_service,
         route_optimization=route_optimization_service,
         x402=x402_client,
+        payment_reward=payment_reward_service,
+        transfer_preview=transfer_preview_service,
+        tee_wallet=tee_wallet_service,
     )
 
     # ── Collect plugins ──────────────────────────────────────────
@@ -332,6 +401,8 @@ def create_agent() -> Agent:
             remittance_tools.monitor_fee_changes,
             remittance_tools.parse_transfer_intent,
             remittance_tools.find_optimal_routes,
+            remittance_tools.preview_transfer,
+            remittance_tools.get_agent_earnings,
         ],
         plugins=plugins,
     )
