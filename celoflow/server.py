@@ -16,6 +16,8 @@ from services.translation_service import TranslationService
 from services.reputation_analytics import ReputationAnalyticsService
 from services.wallet_context_service import wallet_context_service
 from services.contacts_context_service import contacts_context_service
+from services.auth_service import AuthService, AuthConfig
+from middleware.auth_middleware import AuthMiddleware
 
 # Contextwise imports
 from contextwise.server import create_app
@@ -44,6 +46,17 @@ agent = create_agent()
 # 2. Create the FastAPI App using Contextwise (handles lifecycle, logging, etc.)
 # This includes the agent's chat endpoints and MCP client management
 app = create_app(agent)
+
+# 3. Initialize Authentication Service
+auth_config = AuthConfig.from_env()
+# Wire TEE plugin from agent's plugins list for attestation support
+_tee_plugin = None
+for p in getattr(agent, 'plugins', []):
+    if getattr(p, 'name', '') == 'tee':
+        _tee_plugin = p
+        break
+auth_service = AuthService(config=auth_config, tee_plugin=_tee_plugin)
+logger.info("AuthService initialized (tee_attestation=%s)", auth_config.enable_tee_attestation)
 
 
 # ------------------------------------------------------------------
@@ -219,10 +232,167 @@ class WalletContextMiddleware:
 
 app.add_middleware(WalletContextMiddleware)
 
-# 3. Mount the MCP Server (Host) for external tools access
+# 4. Add Authentication Middleware (runs BEFORE WalletContextMiddleware in ASGI stack)
+# In Starlette, the LAST added middleware runs FIRST on incoming requests.
+app.add_middleware(AuthMiddleware, auth_service=auth_service)
+
+# 5. Mount the MCP Server (Host) for external tools access
 # This exposes the "host" MCP server at /mcp (SSE)
 app.mount("/mcp", mcp_app.sse_app())
 logger.info("Mounted MCP Server at /mcp")
+
+# ------------------------------------------------------------------
+# Authentication Endpoints
+# ------------------------------------------------------------------
+
+@app.post("/auth/login")
+async def auth_login(request: Request):
+    """Authenticate and receive JWT tokens.
+
+    Accepts JSON body with optional fields:
+    - api_key: API key for service-to-service auth
+    - wallet_address: Connected wallet address
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    origin = request.headers.get("origin")
+    api_key = body.get("api_key") or request.headers.get("x-api-key")
+    wallet_address = body.get("wallet_address")
+
+    result = await auth_service.authenticate(
+        origin=origin,
+        api_key=api_key,
+        wallet_address=wallet_address,
+    )
+
+    if not result.success:
+        return JSONResponse(
+            content={"error": result.message, "success": False},
+            status_code=401,
+            headers={"Access-Control-Allow-Origin": origin or "*"},
+        )
+
+    return JSONResponse(
+        content={
+            "success": True,
+            "message": result.message,
+            "access_token": result.access_token,
+            "refresh_token": result.refresh_token,
+            "expires_in": result.expires_in,
+            "token_type": result.token_type,
+            "tee_verified": result.tee_verified,
+        },
+        headers={"Access-Control-Allow-Origin": origin or "*"},
+    )
+
+
+@app.post("/auth/refresh")
+async def auth_refresh(request: Request):
+    """Refresh an access token using a refresh token.
+
+    Accepts JSON body with:
+    - refresh_token: The refresh token to use
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse(
+            content={"error": "Invalid request body", "success": False},
+            status_code=400,
+        )
+
+    refresh_token = body.get("refresh_token")
+    if not refresh_token:
+        return JSONResponse(
+            content={"error": "refresh_token is required", "success": False},
+            status_code=400,
+        )
+
+    origin = request.headers.get("origin")
+    success, new_access_token, error = auth_service.refresh_access_token(
+        refresh_token=refresh_token,
+        origin=origin,
+    )
+
+    if not success:
+        return JSONResponse(
+            content={"error": error, "success": False},
+            status_code=401,
+        )
+
+    return JSONResponse(
+        content={
+            "success": True,
+            "access_token": new_access_token,
+            "expires_in": auth_service.config.access_token_expiry,
+            "token_type": "Bearer",
+        },
+        headers={"Access-Control-Allow-Origin": origin or "*"},
+    )
+
+
+@app.post("/auth/logout")
+async def auth_logout(request: Request):
+    """Revoke the current access token (logout).
+
+    Reads the Bearer token from the Authorization header.
+    """
+    authorization = request.headers.get("authorization", "")
+    if not authorization.startswith("Bearer "):
+        return JSONResponse(
+            content={"error": "No token provided", "success": False},
+            status_code=400,
+        )
+
+    token = authorization[7:].strip()
+    success, message = auth_service.revoke_token(token)
+
+    return JSONResponse(
+        content={"success": success, "message": message},
+        status_code=200 if success else 400,
+    )
+
+
+@app.get("/auth/attestation")
+async def auth_attestation():
+    """Get TEE attestation information.
+
+    Returns attestation status and details. When ENABLE_TEE_ATTESTATION=true,
+    includes the full TEE quote for verification.
+    """
+    info = await auth_service.get_attestation_info()
+    return JSONResponse(
+        content=info,
+        headers={"Access-Control-Allow-Origin": "*"},
+    )
+
+
+@app.get("/auth/status")
+async def auth_status(request: Request):
+    """Check authentication status for the current request."""
+    auth_info = request.scope.get("auth", {})
+    if not auth_info:
+        return JSONResponse(
+            content={
+                "authenticated": False,
+                "message": "Not authenticated",
+            },
+            status_code=401,
+        )
+
+    return JSONResponse(
+        content={
+            "authenticated": True,
+            "method": auth_info.get("method"),
+            "subject": auth_info.get("subject"),
+            "tee_verified": auth_info.get("tee_verified", False),
+            "scopes": auth_info.get("scopes", []),
+        }
+    )
+
 
 # ------------------------------------------------------------------
 # Health & Well-Known Endpoints (8004scan Compliance)

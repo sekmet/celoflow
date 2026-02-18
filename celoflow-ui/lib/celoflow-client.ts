@@ -9,6 +9,7 @@
 
 import { LLMStatusDetector } from './llm-status-detector';
 import { LLMStatusState } from '../types/llm-status';
+import { authService } from './auth-service';
 
 // Re-export for convenience
 export type { LLMStatusState };
@@ -140,11 +141,15 @@ export async function streamChat(options: StreamChatOptions): Promise<string> {
       ...(contacts && contacts.length > 0 && { contacts }),
     }
 
+    // Get auth headers (auto-refreshes token if needed)
+    const authHeaders = await authService.getAuthHeaders()
+
     const response = await fetch(`${endpointBase}/chat/stream`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Accept: 'text/event-stream',
+        ...authHeaders,
       },
       body: JSON.stringify(requestBody),
       signal,
@@ -152,6 +157,19 @@ export async function streamChat(options: StreamChatOptions): Promise<string> {
 
     if (!response.ok) {
       const body = await response.text()
+      console.error('[CeloFlow] Stream error details:', { 
+        status: response.status, 
+        statusText: response.statusText, 
+        body,
+        headers: Object.fromEntries(response.headers.entries())
+      })
+      
+      // If auth error, clear stored auth data
+      if (response.status === 401) {
+        console.warn('[CeloFlow] Auth error detected, clearing stored data')
+        authService.clearStoredData()
+      }
+      
       throw new Error(
         `Chat stream error: ${response.status} ${response.statusText} — ${body}`,
       )
@@ -281,15 +299,31 @@ export async function sendChat(options: SendChatOptions): Promise<string> {
     ...(contacts && contacts.length > 0 && { contacts }),
   }
 
+  // Get auth headers (auto-refreshes token if needed)
+  const authHeaders = await authService.getAuthHeaders()
+
   const response = await fetch(`${endpointBase}/chat`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...authHeaders },
     body: JSON.stringify(requestBody),
     signal,
   })
 
   if (!response.ok) {
     const body = await response.text()
+    console.error('[CeloFlow] Chat error details:', { 
+      status: response.status, 
+      statusText: response.statusText, 
+      body,
+      headers: Object.fromEntries(response.headers.entries())
+    })
+    
+    // If auth error, clear stored auth data
+    if (response.status === 401) {
+      console.warn('[CeloFlow] Auth error detected, clearing stored data')
+      authService.clearStoredData()
+    }
+    
     throw new Error(
       `Chat error: ${response.status} ${response.statusText} — ${body}`,
     )

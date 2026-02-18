@@ -2,12 +2,14 @@ import React, { useState, useEffect } from 'react';
 import { WagmiProvider } from 'wagmi';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { Bot, ChevronRight, Globe, Lock, Wallet, CheckCircle2, Moon, Sun, ArrowLeft, Zap, Users } from 'lucide-react';
+import { useAccount } from 'wagmi';
 import { ChatInterface } from './components/ChatInterface';
 import { SmartRouter } from './components/SmartRouter';
 import { WalletConnect } from './components/WalletConnect';
 import { config, queryClient } from './lib/wagmi-config';
 import { ContactsManager } from './components/ContactsManager';
 import { LanguageSwitcher } from './components/LanguageSwitcher';
+import { AuthStatus } from './components/AuthStatus';
 import { NAV_LINKS } from './constants';
 import { useI18n } from './lib/language';
 
@@ -27,6 +29,7 @@ function AppContent() {
   const [currentView, setCurrentView] = useState<'landing' | 'app'>('landing');
   const [showContacts, setShowContacts] = useState(false);
   const { t } = useI18n();
+  const { address: walletAddress } = useAccount();
 
   useEffect(() => {
     // Update DOM and localStorage when theme changes
@@ -58,6 +61,7 @@ function AppContent() {
                     <Users className="w-5 h-5" />
                  </button>
                  <LanguageSwitcher />
+                 <AuthStatus walletAddress={walletAddress} />
                  <WalletConnect />
                  <button 
                     onClick={() => setIsDark(!isDark)}
