@@ -3,6 +3,9 @@
 ## Mission Summary
 To accelerate **global prosperity** by dismantling the barriers to financial inclusion. CeloFlow reimagines remittances not as a complex banking task, but as a simple conversation. By merging **Celo’s mobile-first infrastructure** with **Agentic AI**, we empower users in emerging markets to bypass predatory fees and complex interfaces, ensuring that money sent home actually *arrives* home—instantly, securely, and with dignity.
 
+<img width="1375" height="898" alt="image" src="https://github.com/user-attachments/assets/bd2d5eaa-7ea3-4372-b92b-c87101ab1333" />
+
+
 ## Description
 **CeloFlow** is an AI-powered remittance agent that democratizes access to cross-border payments on the Celo blockchain. It acts as a "banker bot" that understands natural language requests in multiple languages (English, Spanish, Portuguese, French) and executes complex financial transactions seamlessly. By leveraging **Mento Protocol** for stablecoin swaps and **TEE (Trusted Execution Environments)** for secure key management, CeloFlow enables users to send money ("Send 50 cUSD to Mom") or schedule recurring transfers ("Rent to landlord every month") via simple chat interfaces like WhatsApp or Telegram, without managing private keys or gas fees directly.
 
