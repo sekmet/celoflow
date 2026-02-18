@@ -237,8 +237,8 @@ contract DeployScript is Script {
     function _saveEnvFile(DeploymentInfo memory info) internal {
         string memory content = string.concat(
             "# ERC-8004 Remittance Agent Deployment (Celo Sepolia)\n",
-            "# Chain ID: 44787\n",
-            "# RPC: https://forno.celo-sepolia.celo-testnet.org\n",
+            "# Chain ID: 11142220\n",
+            "# RPC: https://celo-sepolia.g.alchemy.com/v2/E1tpzIwNYKbEADvBUW4fnAq13UCobt_3\n",
             "# Generated: ", vm.toString(info.timestamp), "\n\n"
         );
         content = string.concat(content, "IDENTITY_REGISTRY=", vm.toString(info.identityRegistry), "\n");

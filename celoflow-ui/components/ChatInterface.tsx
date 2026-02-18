@@ -2,7 +2,8 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { Send, Bot, User, CheckCircle2, ChevronRight, Loader2, RefreshCcw, History, CalendarClock, X, Search, Activity, Zap, TrendingUp, AlertCircle, Mic, ChevronDown, Info, Ban, Share2, HelpCircle } from 'lucide-react';
 import { useAccount } from 'wagmi';
 import { MarkdownContent } from './MarkdownContent';
-import { streamChat, type ChatMessage as CeloflowMessage, type WalletContext, type ContactData } from '../lib/celoflow-client';
+import { LLMStatusIndicator } from './LLMStatusIndicator';
+import { streamChat, type ChatMessage as CeloflowMessage, type WalletContext, type ContactData, type LLMStatusState } from '../lib/celoflow-client';
 import { getContacts } from '../services/contactsService';
 import { getExchangeRate } from '../services/currencyService';
 import { Message, TransactionIntent, TransactionHistoryItem } from '../types';
@@ -99,6 +100,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ className = '', fu
   const [isLoading, setIsLoading] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamingMsgId, setStreamingMsgId] = useState<string | null>(null);
+  const [llmStatus, setLlmStatus] = useState<LLMStatusState>({ status: 'idle', timestamp: Date.now() });
   const abortRef = useRef<AbortController | null>(null);
   const [showHistory, setShowHistory] = useState(false);
   const [history, setHistory] = useState<TransactionHistoryItem[]>([]);
@@ -110,6 +112,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ className = '', fu
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
+  const isUserScrolling = useRef(false);
 
   // Create wallet context for the agent (memoized to prevent infinite re-renders)
   const walletContext = useMemo((): WalletContext => {
@@ -158,9 +161,42 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ className = '', fu
 
   useEffect(() => {
     if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+      const scrollContainer = scrollRef.current;
+      
+      // Only auto-scroll if user is not manually scrolling or is already at bottom
+      const isAtBottom = scrollContainer.scrollHeight - scrollContainer.scrollTop <= scrollContainer.clientHeight + 50; // 50px tolerance
+      
+      if (!isUserScrolling.current || isAtBottom) {
+        // Smooth scroll to bottom when messages change or fees expand
+        scrollContainer.scrollTo({
+          top: scrollContainer.scrollHeight,
+          behavior: 'smooth'
+        });
+      }
+      
+      // Reset user scrolling flag after a short delay
+      const timeoutId = setTimeout(() => {
+        isUserScrolling.current = false;
+      }, 1000);
+      
+      return () => clearTimeout(timeoutId);
     }
   }, [messages, expandedFees]); // Scroll when fees expand too
+
+  // Handle scroll events to detect user scrolling
+  const handleScroll = useCallback(() => {
+    if (scrollRef.current) {
+      const scrollContainer = scrollRef.current;
+      const isAtBottom = scrollContainer.scrollHeight - scrollContainer.scrollTop <= scrollContainer.clientHeight + 50;
+      
+      // Mark as user scrolling if not at bottom
+      if (!isAtBottom) {
+        isUserScrolling.current = true;
+      } else {
+        isUserScrolling.current = false;
+      }
+    }
+  }, []);
 
   // Detect user local currency on mount
   useEffect(() => {
@@ -270,6 +306,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ className = '', fu
     setMessages(prev => [...prev, assistantMsg]);
     setStreamingMsgId(assistantId);
     setIsStreaming(true);
+    console.log('Starting streaming, isStreaming set to true');
     setIsLoading(false);
 
     // Build messages array for the backend
@@ -335,6 +372,10 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ className = '', fu
             ),
           );
         },
+        onStatus: (statusState) => {
+          console.log('LLM Status Update:', statusState);
+          setLlmStatus(statusState);
+        },
       });
     } catch (error: unknown) {
       if (!isAbortError(error)) {
@@ -356,6 +397,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ className = '', fu
       if (rafId) cancelAnimationFrame(rafId);
       setIsStreaming(false);
       setStreamingMsgId(null);
+      setLlmStatus({ status: 'idle', timestamp: Date.now() });
     }
   };
 
@@ -649,7 +691,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ className = '', fu
         )}
 
         {/* Chat Area */}
-        <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-6 bg-gray-50/50 dark:bg-gray-900/50 scroll-smooth">
+        <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto p-4 space-y-6 bg-gray-50/50 dark:bg-gray-900/50 scroll-smooth">
             {messages.map((msg) => (
                 <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} animate-fade-in-up`}>
                     <div className={`max-w-[90%] ${msg.role === 'user' ? 'order-1' : 'order-2'}`}>
@@ -888,6 +930,10 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ className = '', fu
                     </div>
                 </div>
             ))}
+            {/* LLM Status Indicator */}
+            {isStreaming && (
+              <LLMStatusIndicator status={llmStatus} className="pl-2" />
+            )}
             {isLoading && (
                  <div className="flex items-center gap-2 text-gray-400 text-sm pl-2 animate-pulse">
                     <Loader2 className="w-4 h-4 animate-spin" />

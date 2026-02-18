@@ -7,6 +7,12 @@
  * Pattern adapted from contextwise-agent-ui's openai-client.ts
  */
 
+import { LLMStatusDetector } from './llm-status-detector';
+import { LLMStatusState } from '../types/llm-status';
+
+// Re-export for convenience
+export type { LLMStatusState };
+
 // Default to localhost:8000 for local development; override via VITE_CELOFLOW_API_URL
 export const CELOFLOW_API_URL: string =
   (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_CELOFLOW_API_URL) ||
@@ -52,6 +58,9 @@ export interface WalletContext {
 /** Callback receives full accumulated content + the latest delta */
 export type OnStreamContentCallback = (fullContent: string, delta: string) => void
 
+/** Callback receives LLM status updates */
+export type OnStatusCallback = (status: LLMStatusState) => void
+
 export interface ContactData {
   id: string
   name: string
@@ -76,6 +85,7 @@ export interface StreamChatOptions {
   onContent?: OnStreamContentCallback
   onComplete?: (fullContent: string) => void
   onError?: (error: Error) => void
+  onStatus?: OnStatusCallback
   signal?: AbortSignal
 }
 
@@ -111,8 +121,13 @@ export async function streamChat(options: StreamChatOptions): Promise<string> {
     onContent,
     onComplete,
     onError,
+    onStatus,
     signal,
   } = options
+
+  // Initialize status detector
+  const statusDetector = new LLMStatusDetector();
+  statusDetector.start(onStatus);
 
   const endpointBase = getBaseUrl(baseUrl)
 
@@ -179,6 +194,14 @@ export async function streamChat(options: StreamChatOptions): Promise<string> {
               if (delta) {
                 fullContent += delta
                 onContent?.(fullContent, delta)
+                
+                // Detect and emit status updates
+                if (onStatus) {
+                  const statusState = statusDetector.analyzeContent(fullContent);
+                  if (statusState.status !== 'idle') {
+                    onStatus(statusState);
+                  }
+                }
               }
             } catch (parseError) {
               if (
@@ -208,6 +231,14 @@ export async function streamChat(options: StreamChatOptions): Promise<string> {
             if (delta) {
               fullContent += delta
               onContent?.(fullContent, delta)
+              
+              // Detect and emit status updates for trailing content
+              if (onStatus) {
+                const statusState = statusDetector.analyzeContent(fullContent);
+                if (statusState.status !== 'idle') {
+                  onStatus(statusState);
+                }
+              }
             }
           } catch {
             // Ignore trailing parse errors
@@ -216,11 +247,13 @@ export async function streamChat(options: StreamChatOptions): Promise<string> {
       }
     } finally {
       reader.releaseLock()
+      statusDetector.stop()
     }
 
     onComplete?.(fullContent)
     return fullContent
   } catch (error) {
+    statusDetector.stop()
     const err = error instanceof Error ? error : new Error(String(error))
     onError?.(err)
     throw err

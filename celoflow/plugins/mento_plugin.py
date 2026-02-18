@@ -14,13 +14,29 @@ logger = logging.getLogger(__name__)
 # Uses BiPoolManager as the ExchangeProvider for these pairs
 MENTO_BROKER_ADDRESS = "0xB9Ae2065142EB79b6c5EB1E8778F883fad6B07Ba"
 
-# Discovered Exchange IDs for Celo Sepolia
+# BiPoolManager — the sole exchange provider on Celo Sepolia
+BIPOOL_MANAGER_ADDRESS = "0xeCB3C656C131fCd9bB8D1d80898716bD684feb78"
+
+# Discovered Exchange IDs for Celo Sepolia (all 19 pairs, bi-directional)
+# All pairs have USDm on one side.  Discovered on-chain 2026-02-17.
 EXCHANGE_IDS: Dict[str, str] = {
-    # Direction is important; Mento v2 pools are often bi-directional but ID is unique per pair
     "USDm/PHPm": "7952984d7278ca3417febf52815c321984ac3147ced2c02bb6a02b0bcab08413",
+    "USDm/axlUSDC": "0d739efbfc30f303e8d1976c213b4040850d1af40f174f4169b846f6fd3d2f20",
     "USDm/XOFm": "c9664df358594c5eaf2f410ab371e2deb8b532ca26162d2bc36d99b8d174567b",
     "USDm/CELO": "3135b662c38265d0655177091f1b647b4fef511103d06c016efdf18b46930d2c",
-    "USDm/axlUSDC": "0d739efbfc30f303e8d1976c213b4040850d1af40f174f4169b846f6fd3d2f20",
+    "USDm/EURm": "746455363e8f55d04e0a2cc040d1b348a6c031b336ba6af6ae91515c194929c8",
+    "USDm/AUDm": "d580d237231109e6a96d67d82450611c610a805a26660c90281bdc0cd04a95c7",
+    "USDm/CADm": "517ccc3bcab9f35e2e24143a0c1809068efc649f740846cfb6a1c5703735c1ee",
+    "USDm/GBPm": "6c369bfb1598b2f7718671221bc524c84874ad1ed7ba02a61121e7a06722e2ce",
+    "USDm/ZARm": "4206e101b13bf29e40b2bfed4cf167271c41677720f2ee786ac1bf5efac101cb",
+    "USDm/CHFm": "3ddbc61433314a4b7d3cbb56a001fc4cc0f1d52d64338336d5f2083a580ce4fc",
+    "USDm/JPYm": "7c3b41fbd140c6fb54ff9f8f7b7b0c954606682d44ed5e56b0080f40faaf652c",
+    "USDm/COPm": "1c9378bd0973ff313a599d3effc654ba759f8ccca655ab6d6ce5bd39a212943b",
+    "USDm/BRLm": "d11d52b973ddbb983cc2087aabcafd915fc3140cf9996aacc61db9710d1bde05",
+    "USDm/GHSm": "3562f9d29eba092b857480a82b03375839c752346b9ebe93a57ab82410328187",
+    "USDm/NGNm": "67a5122dab72931be57196e0abba81690461f327bc60fb98ca7eef0ac58906cc",
+    "USDm/KESm": "89de88b8eb790de26f4649f543cb6893d93635c728ac857f0926e842fb0d298b",
+    "USDm/USDT": "773bcec109cee923b5e04706044fd9d6a5121b1a6a4c059c36fdbe5b845d4e9b",
 }
 
 # Broker ABI for getAmountOut and swapIn
@@ -120,7 +136,7 @@ class MentoPlugin(AgentPlugin[AgentContext]):
         try:
             from web3 import Web3
             exchange_id = bytes.fromhex(exchange_id_hex)
-            provider = self.broker.functions.getExchangeProvider(exchange_id).call()
+            provider = Web3.to_checksum_address(BIPOOL_MANAGER_ADDRESS)
             amount_out = self.broker.functions.getAmountOut(
                 provider,
                 exchange_id,
@@ -287,12 +303,12 @@ class MentoPlugin(AgentPlugin[AgentContext]):
                 return "0x" + "0" * 64
             
             exchange_id = bytes.fromhex(exchange_id_hex)
-            provider = self.broker.functions.getExchangeProvider(exchange_id).call()
+            provider = Web3.to_checksum_address(BIPOOL_MANAGER_ADDRESS)
             
             # Apply 1% slippage tolerance
             amount_out_min = int(amount_out_wei * 0.99)
             
-            # First, approve the Broker to spend our tokenIn
+            # Pre-flight: check signer has enough of tokenIn
             ERC20_APPROVE_ABI = [
                 {
                     "inputs": [
@@ -303,8 +319,28 @@ class MentoPlugin(AgentPlugin[AgentContext]):
                     "outputs": [{"name": "", "type": "bool"}],
                     "stateMutability": "nonpayable",
                     "type": "function",
-                }
+                },
+                {
+                    "inputs": [{"name": "account", "type": "address"}],
+                    "name": "balanceOf",
+                    "outputs": [{"name": "", "type": "uint256"}],
+                    "stateMutability": "view",
+                    "type": "function",
+                },
             ]
+            token_contract = self.w3.eth.contract(
+                address=Web3.to_checksum_address(token_in),
+                abi=ERC20_APPROVE_ABI,
+            )
+            signer_balance = token_contract.functions.balanceOf(signer.address).call()
+            if signer_balance < amount_in_wei:
+                logger.error(
+                    "execute_swap: insufficient tokenIn balance. Have %d, need %d",
+                    signer_balance, amount_in_wei,
+                )
+                return f"0xERROR_insufficient_tokenIn_balance"
+
+            # Approve the Broker to spend our tokenIn
             token_contract = self.w3.eth.contract(
                 address=Web3.to_checksum_address(token_in),
                 abi=ERC20_APPROVE_ABI,
@@ -348,6 +384,8 @@ class MentoPlugin(AgentPlugin[AgentContext]):
                 "Mento swap executed: %s (gas used: %d, status: %d)",
                 tx_hex, receipt["gasUsed"], receipt["status"]
             )
+            if receipt["status"] == 0:
+                return f"0xERROR_swap_reverted_{tx_hex[:16]}"
             return tx_hex
             
         except Exception as e:

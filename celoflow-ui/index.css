@@ -12,6 +12,7 @@
   --animate-fade-in-up: fadeInUp 0.5s ease-out;
   --animate-pulse-slow: pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite;
   --animate-float: float 6s ease-in-out infinite;
+  --animate-status-pulse: statusPulse 1.5s ease-in-out infinite alternate;
 
   @keyframes fadeInUp {
     0% { opacity: 0; transform: translateY(10px); }
@@ -22,11 +23,26 @@
     0%, 100% { transform: translateY(0); }
     50% { transform: translateY(-10px); }
   }
+
+  @keyframes statusPulse {
+    0% { opacity: 0.7; transform: scale(0.95); }
+    100% { opacity: 1; transform: scale(1); }
+  }
 }
 
 body {
   font-family: "Inter", sans-serif;
   overscroll-behavior-y: none;
+}
+
+a {
+  cursor: pointer;
+  user-select: none;
+}
+
+button {
+  cursor: pointer;
+  user-select: none;
 }
 
 .glass-card {

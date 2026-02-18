@@ -162,6 +162,7 @@ def create_agent() -> Agent:
             remittance_tools.find_optimal_route,
             remittance_tools.calculate_fees,
             remittance_tools.execute_transfer,
+            remittance_tools.send_token,
             remittance_tools.get_wallet_balance,
             remittance_tools.get_current_wallet_context,
             remittance_tools.compare_fees_with_providers,

@@ -67,15 +67,51 @@ def _build_dynamic_instructions() -> str:
 ## LIVE Wallet Context (auto-injected per request)
 {wallet_section}
 
-**IMPORTANT**: The wallet data above is LIVE. Use it directly — do NOT say the wallet is disconnected if it shows "Connected" above.
-If balances are shown above, present them to the user immediately without calling any tools.
-Only use `get_current_wallet_context()` tool if the data above says "No wallet connected" and you want to double-check.
+**CRITICAL RULE — WALLET**: The wallet data above is LIVE and REAL. Use it directly.
+- Do NOT say the wallet is disconnected if it shows "Connected" above.
+- If balances are shown above, present them to the user immediately without calling any tools.
+- Only use `get_current_wallet_context()` tool if the data above says "No wallet connected".
 
-## LIVE Contacts Context (auto-injected per request)
+## LIVE User Contacts (auto-injected per request)
 {contacts_section}
 
-**IMPORTANT**: Use the contacts above to suggest recipients. Do NOT ask for recipient addresses if the contact is listed above.
+**CRITICAL RULE — CONTACTS**: The contacts listed above are the user's REAL saved contacts.
+- You MUST acknowledge these contacts when the user asks about them.
+- Do NOT say "I don't see contacts" or "no contacts list" — the contacts ARE listed above.
+- When the user mentions a contact by name (e.g. "send to Maria"), match it to the contact above and use their wallet address directly.
+- Always show the contact's name, city, country, and wallet address when referencing them.
+- If the user asks "who are my contacts", list ALL contacts shown above with their details.
 """
+
+
+def _build_context_message() -> str:
+    """Build a concise context message to inject into the conversation messages."""
+    parts = []
+
+    wallet_ctx = wallet_context_service.get_wallet_context()
+    if wallet_ctx and wallet_ctx.connected:
+        parts.append(f"[SYSTEM CONTEXT] User wallet {wallet_ctx.wallet_address} is connected on chain {wallet_ctx.chain_id}.")
+        if wallet_ctx.balances:
+            non_zero = {k: v for k, v in wallet_ctx.balances.items() if float(v) > 0}
+            if non_zero:
+                bal_str = ", ".join(f"{v} {k}" for k, v in list(non_zero.items())[:10])
+                parts.append(f"Balances: {bal_str}")
+
+    contacts_str = contacts_context_service.get_contacts_string()
+    if contacts_str and "No contacts" not in contacts_str:
+        parts.append(f"\n[USER CONTACTS]\n{contacts_str}")
+        parts.append("RULE: When the user mentions a contact name, use their wallet address from the list above. Do NOT say you cannot see contacts.")
+
+    # Inject transfer execution guidance
+    parts.append(
+        "\n[TRANSFER GUIDANCE]\n"
+        "When the user requests a token transfer (e.g. 'Send 1 BRLm to Charles'), "
+        "use the `send_token` tool with the contact's wallet address from the list above. "
+        "For cross-currency swaps, use `execute_transfer`. "
+        "Execute transfers directly without asking for extra confirmation — the user expects immediate action."
+    )
+
+    return "\n".join(parts) if parts else ""
 
 
 class WalletContextMiddleware:
@@ -138,6 +174,31 @@ class WalletContextMiddleware:
 
                 # Dynamically rebuild agent instructions with fresh context
                 agent.instructions = _build_dynamic_instructions()
+
+                # Contextwise only extracts the LAST user message string
+                # via agent.chat_async(message=user_message).  System messages
+                # in the array are ignored.  To guarantee the LLM sees live
+                # context, we prepend it directly to the user's message.
+                context_prefix = _build_context_message()
+                if context_prefix:
+                    messages = body_data.get("messages", [])
+                    # Find the last user message and prepend context
+                    for i in range(len(messages) - 1, -1, -1):
+                        if messages[i].get("role") == "user":
+                            original = messages[i]["content"]
+                            messages[i]["content"] = (
+                                f"[LIVE CONTEXT — use this data to answer]\n"
+                                f"{context_prefix}\n"
+                                f"[END CONTEXT]\n\n"
+                                f"{original}"
+                            )
+                            break
+                    body_data["messages"] = messages
+                    body_bytes = json.dumps(body_data).encode("utf-8")
+                    logger.info(
+                        "Middleware: prepended context (%d chars) to user message",
+                        len(context_prefix),
+                    )
 
         except Exception as e:
             logger.warning("Middleware: failed to process wallet context: %s", e)

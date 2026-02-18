@@ -1,18 +1,21 @@
 import { createRxDatabase } from 'rxdb/plugins/core';
 import { getRxStorageDexie } from 'rxdb/plugins/storage-dexie';
+import { wrappedValidateZSchemaStorage } from 'rxdb/plugins/validate-z-schema';
 import { addRxPlugin } from 'rxdb';
 import { RxDBDevModePlugin } from 'rxdb/plugins/dev-mode';
 import type { RxCollection, RxDatabase, RxJsonSchema } from 'rxdb';
 import { Contact } from '../types';
 
-// Enable dev-mode for detailed error messages
-addRxPlugin(RxDBDevModePlugin);
+// Enable dev-mode for detailed error messages in development
+if (import.meta.env.DEV) {
+  addRxPlugin(RxDBDevModePlugin);
+}
 
 interface ContactsCollections {
   contacts: RxCollection<Contact>;
 }
 
-const DATABASE_NAME = 'celoflow_contacts_db';
+const DATABASE_NAME = 'celoflow_contacts_db_v2';
 const COLLECTION_NAME = 'contacts';
 
 const contactSchema: RxJsonSchema<Contact> = {
@@ -24,20 +27,20 @@ const contactSchema: RxJsonSchema<Contact> = {
   type: 'object',
   properties: {
     id: { type: 'string', maxLength: 128 },
-    name: { type: 'string' },
-    address: { type: 'string' },
-    network: { type: 'string' },
-    city: { type: 'string' },
-    country: { type: 'string' },
-    avatar: { type: 'string' },
-    phone: { type: 'string' },
-    email: { type: 'string' },
-    notes: { type: 'string' },
+    name: { type: 'string', maxLength: 256 },
+    address: { type: 'string', maxLength: 256 },
+    network: { type: 'string', maxLength: 64 },
+    city: { type: 'string', maxLength: 128 },
+    country: { type: 'string', maxLength: 128 },
+    avatar: { type: 'string', maxLength: 512 },
+    phone: { type: 'string', maxLength: 32 },
+    email: { type: 'string', maxLength: 256 },
+    notes: { type: 'string', maxLength: 1024 },
     favorite: { type: 'boolean' },
     blocked: { type: 'boolean' },
-    group: { type: 'string' },
-    createdAt: { type: 'string' },
-    updatedAt: { type: 'string' },
+    group: { type: 'string', maxLength: 128 },
+    createdAt: { type: 'string', maxLength: 64 },
+    updatedAt: { type: 'string', maxLength: 64 },
   },
   required: [
     'id',
@@ -90,7 +93,7 @@ async function getDatabase(): Promise<RxDatabase<ContactsCollections>> {
       try {
         const db = await createRxDatabase<ContactsCollections>({
           name: DATABASE_NAME,
-          storage: getRxStorageDexie(),
+          storage: wrappedValidateZSchemaStorage({ storage: getRxStorageDexie() }),
           multiInstance: false,
         });
         return db;

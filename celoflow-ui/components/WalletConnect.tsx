@@ -6,6 +6,8 @@ import { useTokenBalances } from '../hooks/useTokenBalances';
 import { TokenPortfolio } from './TokenPortfolio';
 import { tokenBalanceService } from '../services/tokenBalanceService';
 import { parseAbi } from 'viem';
+import { TokenBalance } from '../types';
+import { TOKEN_REGISTRY } from '../lib/token-registry';
 
 function truncateAddress(address: string): string {
   return `${address.slice(0, 6)}…${address.slice(-4)}`;
@@ -19,6 +21,78 @@ function formatBalance(value: bigint | undefined, decimals: number = 18): string
   const fracStr = frac.toString().padStart(decimals, '0').slice(0, 4);
   return `${whole}.${fracStr}`;
 }
+
+// Token icon colors matching TokenPortfolio
+const getTokenIcon = (symbol: string) => {
+  const iconColors: Record<string, string> = {
+    'CELO': 'bg-green-500',
+    'USDm': 'bg-blue-500',
+    'USDC': 'bg-blue-600',
+    'USDT': 'bg-green-600',
+    'EURm': 'bg-yellow-500',
+    'BRLm': 'bg-emerald-500',
+    'XOFm': 'bg-orange-500',
+    'KESm': 'bg-red-500',
+    'PHPm': 'bg-indigo-500',
+    'COPm': 'bg-amber-500',
+    'GBPm': 'bg-purple-500',
+    'CADm': 'bg-rose-500',
+    'AUDm': 'bg-cyan-500',
+    'ZARm': 'bg-teal-500',
+    'GHSm': 'bg-lime-600',
+    'NGNm': 'bg-fuchsia-500',
+    'JPYm': 'bg-pink-500',
+    'CHFm': 'bg-sky-500',
+    'default': 'bg-gray-500'
+  };
+  
+  return iconColors[symbol] || iconColors.default;
+};
+
+// Token metadata for display
+const getTokenMetadata = (symbol: string) => {
+  const metadata: Record<string, { name: string; category: 'mento' | 'tether' | 'circle' | 'vnx' | 'mountain' | 'angle' | 'glo' | 'brla' | 'minteo' | 'gooddollar' | 'native'; decimals: number }> = {
+    'USDT': { name: 'Tether USD', category: 'tether', decimals: 6 },
+    'USDm': { name: 'Mento Dollar', category: 'mento', decimals: 18 },
+    'EURm': { name: 'Mento Euro', category: 'mento', decimals: 18 },
+    'BRLm': { name: 'Mento Brazilian Real', category: 'mento', decimals: 18 },
+    'CELO': { name: 'Celo', category: 'native', decimals: 18 }
+  };
+  
+  return metadata[symbol] || { name: symbol, category: 'mento', decimals: 18 };
+};
+
+// Mock USD prices for tokens (would be fetched from price API in production)
+const MOCK_PRICE_DATA: Record<string, number> = {
+  'CELO': 0.85,
+  'USDm': 1.00,
+  'EURm': 1.08,
+  'BRLm': 0.20,
+  'USDC': 1.00,
+  'USDT': 1.00,
+  'XOFm': 0.0016,
+  'KESm': 0.0081,
+  'PHPm': 0.018,
+  'COPm': 0.00027,
+  'GBPm': 1.27,
+  'CADm': 0.74,
+  'AUDm': 0.66,
+  'ZARm': 0.053,
+  'GHSm': 0.083,
+  'NGNm': 0.00067,
+  'JPYm': 0.0067,
+  'CHFm': 1.12,
+  'vEUR': 1.08,
+  'vGBP': 1.27,
+  'vCHF': 1.12,
+  'USDM': 1.00,
+  'USDA': 1.00,
+  'EURA': 1.08,
+  'USDGLO': 1.00,
+  'BRLA': 0.20,
+  'COPM': 0.00027,
+  'G$': 1.00
+};
 
 export const WalletConnect: React.FC = () => {
   const { address, isConnected, chain } = useAccount();
@@ -42,54 +116,24 @@ export const WalletConnect: React.FC = () => {
     'function symbol() view returns (string)'
   ]);
 
-  // USDC balance (Note: No Sepolia address listed in docs, skipping for now)
-  // const { data: usdcBalance } = useReadContract({
-  //   address: '0xceba9300f2b948710d2653dd7b07f33a8b32118c' as `0x${string}`,
-  //   abi: erc20Abi,
-  //   functionName: 'balanceOf',
-  //   args: [address as `0x${string}`],
-  //   chainId: balanceChainId,
-  //   query: { enabled: isConnected && !!address }
-  // });
+  // Get tokens available on current network (filter out native CELO and tokens not deployed on Sepolia)
+  const availableTokens = Object.values(TOKEN_REGISTRY).filter(
+    token => token.contractAddress.sepolia !== '0x0000000000000000000000000000000000000000' && 
+             token.symbol !== 'CELO'
+  );
 
-  // USDT balance (Sepolia testnet address)
-  const { data: usdtBalance } = useReadContract({
-    address: '0xd077A400968890Eacc75cdc901F0356c943e4fDb' as `0x${string}`,
-    abi: erc20Abi,
-    functionName: 'balanceOf',
-    args: [address as `0x${string}`],
-    chainId: balanceChainId,
-    query: { enabled: isConnected && !!address }
-  });
-
-  // USDm balance (Sepolia testnet address)
-  const { data: usdmBalance } = useReadContract({
-    address: '0xdE9e4C3ce781b4bA68120d6261cbad65ce0aB00b' as `0x${string}`,
-    abi: erc20Abi,
-    functionName: 'balanceOf',
-    args: [address as `0x${string}`],
-    chainId: balanceChainId,
-    query: { enabled: isConnected && !!address }
-  });
-
-  // EURm balance (Sepolia testnet address)
-  const { data: eurmbalance } = useReadContract({
-    address: '0xA99dC247d6b7B2E3ab48a1fEE101b83cD6aCd82a' as `0x${string}`,
-    abi: erc20Abi,
-    functionName: 'balanceOf',
-    args: [address as `0x${string}`],
-    chainId: balanceChainId,
-    query: { enabled: isConnected && !!address }
-  });
-
-  // BRLm balance (Sepolia testnet address)
-  const { data: brlmbalance } = useReadContract({
-    address: '0x2294298942fdc79417DE9E0D740A4957E0e7783a' as `0x${string}`,
-    abi: erc20Abi,
-    functionName: 'balanceOf',
-    args: [address as `0x${string}`],
-    chainId: balanceChainId,
-    query: { enabled: isConnected && !!address }
+  // Dynamic token balance queries
+  const tokenBalanceQueries = availableTokens.map(token => {
+    const { data: balance } = useReadContract({
+      address: token.contractAddress.sepolia as `0x${string}`,
+      abi: erc20Abi,
+      functionName: 'balanceOf',
+      args: [address as `0x${string}`],
+      chainId: balanceChainId,
+      query: { enabled: isConnected && !!address }
+    });
+    
+    return { token, balance };
   });
 
   // Temporarily disable multi-token balance hook to restore working UI
@@ -110,6 +154,7 @@ export const WalletConnect: React.FC = () => {
   const [showOptions, setShowOptions] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [copiedToken, setCopiedToken] = useState<string | null>(null);
 
   // Close dropdowns on outside click
   useEffect(() => {
@@ -131,6 +176,58 @@ export const WalletConnect: React.FC = () => {
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const handleCopyTokenAddress = async (address: string, symbol: string) => {
+    await navigator.clipboard.writeText(address);
+    setCopiedToken(symbol);
+    setTimeout(() => setCopiedToken(null), 2000);
+  };
+
+  // Convert balance data to TokenBalance format for consistent display
+  const createTokenBalance = (symbol: string, balance: bigint | undefined, contractAddress: string): TokenBalance | null => {
+    if (!balance || balance === 0n) return null;
+    
+    const metadata = getTokenMetadata(symbol);
+    const formattedBalance = formatBalance(balance, metadata.decimals);
+    
+    return {
+      symbol,
+      name: metadata.name,
+      contractAddress,
+      balance,
+      decimals: metadata.decimals,
+      formattedBalance,
+      category: metadata.category,
+      usdValue: undefined, // Could be calculated later
+      change24h: undefined,
+      isNative: symbol === 'CELO',
+      lastUpdated: new Date()
+    };
+  };
+
+  // Create token balance array dynamically
+  const tokenBalances: TokenBalance[] = tokenBalanceQueries
+    .map(({ token, balance }) => {
+      if (!balance || balance === 0n) return null;
+      
+      const formattedBalance = formatBalance(balance, token.decimals);
+      
+      return {
+        symbol: token.symbol,
+        name: token.name,
+        contractAddress: token.contractAddress.sepolia,
+        balance,
+        decimals: token.decimals,
+        formattedBalance,
+        category: token.category,
+        usdValue: undefined, // Could be calculated later
+        change24h: undefined,
+        isNative: false,
+        lastUpdated: new Date(),
+        error: undefined
+      } as TokenBalance;
+    })
+    .filter((token): token is TokenBalance => token !== null);
+
   if (isConnected && address) {
     return (
       <div className="relative" data-wallet-widget>
@@ -138,7 +235,7 @@ export const WalletConnect: React.FC = () => {
           onClick={() => setShowProfile(!showProfile)}
           className="flex items-center gap-2 px-3 py-2 rounded-full bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 hover:border-celo-green transition-colors text-sm font-medium"
         >
-          <div className="w-6 h-6 rounded-full bg-gradient-to-tr from-celo-green to-blue-500 shrink-0" />
+          <div className="w-6 h-6 rounded-full bg-linear-to-tr from-celo-green to-blue-500 shrink-0" />
           <span className="text-gray-900 dark:text-white hidden sm:inline">
             {truncateAddress(address)}
           </span>
@@ -196,82 +293,65 @@ export const WalletConnect: React.FC = () => {
               </div>
             )}
 
-            {/* Simple Multi-Token Display */}
-            {(usdtBalance !== undefined || usdmBalance !== undefined || eurmbalance !== undefined || brlmbalance !== undefined) && (
+            {/* Enhanced Multi-Token Display */}
+            {tokenBalances.length > 0 && (
               <div className="px-4 py-3 border-b border-gray-100 dark:border-gray-700">
-                <div className="text-xs text-gray-500 dark:text-gray-400 mb-2">{t('Token Balances')}</div>
+                <div className="text-xs text-gray-500 dark:text-gray-400 mb-3 flex items-center justify-between">
+                  <span>{t('Token Balances')}</span>
+                  <span className="text-celo-green">{tokenBalances.length} tokens</span>
+                </div>
                 
-                {/* USDT */}
-                {usdtBalance !== undefined && (
-                  <div className="flex justify-between items-center py-2">
-                    <div>
-                      <div className="text-sm font-medium text-gray-900 dark:text-white">USDT</div>
-                      <div className="text-xs text-gray-500 dark:text-gray-400">Tether USD</div>
-                    </div>
-                    <div className="text-right">
-                      <div className="text-sm font-bold text-gray-900 dark:text-white">
-                        {formatBalance(usdtBalance as bigint, 6)}
+                <div className="space-y-2 max-h-64 overflow-y-auto scrollbar-thin scrollbar-thumb-gray-300 dark:scrollbar-thumb-gray-600 scrollbar-track-transparent">
+                  {tokenBalances.map(token => (
+                    <div
+                      key={token.symbol}
+                      className="flex items-center justify-between py-2 hover:bg-gray-50 dark:hover:bg-gray-700/30 rounded-lg px-2 transition-colors"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className={`w-6 h-6 rounded-full ${getTokenIcon(token.symbol)} flex items-center justify-center shrink-0`}>
+                          <span className="text-white text-xs font-bold">
+                            {token.symbol?.slice(0, 2) || '??'}
+                          </span>
+                        </div>
+                        <div>
+                          <div className="text-sm font-medium text-gray-900 dark:text-white">
+                            {token.symbol || 'Unknown'}
+                          </div>
+                          <div className="text-xs text-gray-500 dark:text-gray-400">
+                            {token.category || 'Token'}
+                          </div>
+                        </div>
                       </div>
-                      <div className="text-xs text-green-600 dark:text-green-400">
-                        ≈ ${(parseFloat(formatBalance(usdtBalance as bigint, 6)) * 1.0).toFixed(2)}
+                      <div className="text-right">
+                        <div className="text-sm font-bold text-gray-900 dark:text-white">
+                          {token.formattedBalance || formatBalance(token.balance, token.decimals)}
+                        </div>
+                        <div className="text-xs text-green-600 dark:text-green-400">
+                          {(() => {
+                            const price = MOCK_PRICE_DATA[token.symbol];
+                            if (!price) return '';
+                            return `≈ ${(parseFloat(formatBalance(token.balance, token.decimals)) * price).toFixed(2)} USD`;
+                          })()}
+                        </div>
                       </div>
                     </div>
-                  </div>
-                )}
+                  ))}
+                </div>
 
-                {/* USDm */}
-                {usdmBalance !== undefined && (
-                  <div className="flex justify-between items-center py-2">
-                    <div>
-                      <div className="text-sm font-medium text-gray-900 dark:text-white">USDm</div>
-                      <div className="text-xs text-gray-500 dark:text-gray-400">Mento Dollar</div>
+                {/* Token Actions Footer */}
+                <div className="mt-3 pt-2 border-t border-gray-100 dark:border-gray-700">
+                  <div className="flex items-center justify-between">
+                    <div className="text-xs text-gray-500 dark:text-gray-400">
+                      {t('Live balances from Celo network')}
                     </div>
-                    <div className="text-right">
-                      <div className="text-sm font-bold text-gray-900 dark:text-white">
-                        {formatBalance(usdmBalance as bigint, 18)}
-                      </div>
-                      <div className="text-xs text-green-600 dark:text-green-400">
-                        ≈ ${(parseFloat(formatBalance(usdmBalance as bigint, 18)) * 1.0).toFixed(2)}
-                      </div>
-                    </div>
+                    <button
+                      onClick={() => window.open('https://celoscan.io/', '_blank')}
+                      className="text-xs text-celo-green hover:text-green-600 flex items-center gap-1"
+                    >
+                      {t('View on CeloScan')}
+                    </button>
                   </div>
-                )}
-
-                {/* EURm */}
-                {eurmbalance !== undefined && (
-                  <div className="flex justify-between items-center py-2">
-                    <div>
-                      <div className="text-sm font-medium text-gray-900 dark:text-white">EURm</div>
-                      <div className="text-xs text-gray-500 dark:text-gray-400">Mento Euro</div>
-                    </div>
-                    <div className="text-right">
-                      <div className="text-sm font-bold text-gray-900 dark:text-white">
-                        {formatBalance(eurmbalance as bigint, 18)}
-                      </div>
-                      <div className="text-xs text-green-600 dark:text-green-400">
-                        ≈ ${(parseFloat(formatBalance(eurmbalance as bigint, 18)) * 1.08).toFixed(2)}
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {/* BRLm */}
-                {brlmbalance !== undefined && (
-                  <div className="flex justify-between items-center py-2">
-                    <div>
-                      <div className="text-sm font-medium text-gray-900 dark:text-white">BRLm</div>
-                      <div className="text-xs text-gray-500 dark:text-gray-400">Mento Brazilian Real</div>
-                    </div>
-                    <div className="text-right">
-                      <div className="text-sm font-bold text-gray-900 dark:text-white">
-                        {formatBalance(brlmbalance as bigint, 18)}
-                      </div>
-                      <div className="text-xs text-green-600 dark:text-green-400">
-                        ≈ ${(parseFloat(formatBalance(brlmbalance as bigint, 18)) * 0.20).toFixed(2)}
-                      </div>
-                    </div>
-                  </div>
-                )}
+                </div>
               </div>
             )}
 

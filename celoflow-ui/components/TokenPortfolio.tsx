@@ -81,13 +81,25 @@ export const TokenPortfolio: React.FC<TokenPortfolioProps> = ({
   }
 
   const getTokenIcon = (symbol: string) => {
-    // In production, these would be actual token logos
     const iconColors: Record<string, string> = {
       'CELO': 'bg-green-500',
       'USDm': 'bg-blue-500',
       'USDC': 'bg-blue-600',
       'USDT': 'bg-green-600',
       'EURm': 'bg-yellow-500',
+      'BRLm': 'bg-emerald-500',
+      'XOFm': 'bg-orange-500',
+      'KESm': 'bg-red-500',
+      'PHPm': 'bg-indigo-500',
+      'COPm': 'bg-amber-500',
+      'GBPm': 'bg-purple-500',
+      'CADm': 'bg-rose-500',
+      'AUDm': 'bg-cyan-500',
+      'ZARm': 'bg-teal-500',
+      'GHSm': 'bg-lime-600',
+      'NGNm': 'bg-fuchsia-500',
+      'JPYm': 'bg-pink-500',
+      'CHFm': 'bg-sky-500',
       'default': 'bg-gray-500'
     }
     

@@ -83,11 +83,8 @@ class ContactsContextService:
             return "No active contacts available. All contacts are blocked."
         
         context_lines = [
-            f"Contacts Status: {len(active_contacts)} active contacts available",
-            f"Favorite Contacts: {len([c for c in active_contacts if c.favorite])}",
-            f"Groups: {sorted(set(c.group for c in active_contacts if c.group))}",
+            f"USER HAS {len(active_contacts)} SAVED CONTACTS:",
             "",
-            "Available Contacts:"
         ]
         
         # Sort by favorites first, then by updated_at
@@ -97,15 +94,22 @@ class ContactsContextService:
             reverse=True
         )
         
-        for contact in sorted_contacts[:10]:  # Show top 10 contacts
-            favorite_mark = "⭐" if contact.favorite else ""
-            group_info = f" ({contact.group})" if contact.group else ""
-            context_lines.append(
-                f"- {favorite_mark}{contact.name}{group_info} - {contact.city}, {contact.country}"
-            )
-            context_lines.append(f"  Address: {contact.address}")
+        for i, contact in enumerate(sorted_contacts[:10], 1):
+            favorite_mark = " ⭐ FAVORITE" if contact.favorite else ""
+            group_info = f" | Group: {contact.group}" if contact.group else ""
+            context_lines.append(f"Contact #{i}:{favorite_mark}")
+            context_lines.append(f"  Name: {contact.name}")
+            context_lines.append(f"  Wallet Address: {contact.address}")
+            context_lines.append(f"  Network: {contact.network or 'celo'}")
+            context_lines.append(f"  Location: {contact.city}, {contact.country}")
+            if contact.phone:
+                context_lines.append(f"  Phone: {contact.phone}")
+            if contact.email:
+                context_lines.append(f"  Email: {contact.email}")
             if contact.notes:
                 context_lines.append(f"  Notes: {contact.notes}")
+            context_lines.append(f"  {group_info}")
+            context_lines.append("")
         
         if len(active_contacts) > 10:
             context_lines.append(f"... and {len(active_contacts) - 10} more contacts")

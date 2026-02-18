@@ -21,6 +21,9 @@ _kyc_plugin: Any = None
 _compliance_agent_plugin: Any = None
 _fee_comparison_service: Any = None
 _wise_client: Any = None
+_intent_parsing_service: Any = None
+_route_optimization_service: Any = None
+_x402_client: Any = None
 
 
 def set_plugins(
@@ -34,12 +37,16 @@ def set_plugins(
     compliance_agent: Any = None,
     fee_comparison: Any = None,
     wise: Any = None,
+    intent_parsing: Any = None,
+    route_optimization: Any = None,
+    x402: Any = None,
 ) -> None:
     """Wire up plugin references for tools to use."""
     global _mento_plugin, _tee_plugin, _remittance_plugin
     global _compliance_plugin, _notification_plugin, _registry_plugin
     global _kyc_plugin, _compliance_agent_plugin, _fee_comparison_service
-    global _wise_client
+    global _wise_client, _intent_parsing_service, _route_optimization_service
+    global _x402_client
     _mento_plugin = mento
     _tee_plugin = tee
     _remittance_plugin = remittance
@@ -50,6 +57,9 @@ def set_plugins(
     _compliance_agent_plugin = compliance_agent
     _fee_comparison_service = fee_comparison
     _wise_client = wise
+    _intent_parsing_service = intent_parsing
+    _route_optimization_service = route_optimization
+    _x402_client = x402
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -218,20 +228,22 @@ async def execute_transfer(
     except Exception as e:
         return json.dumps({"error": f"Route optimization failed: {str(e)}"})
 
-    logger.info(f"Executing transfer: {amount} {from_currency} -> {to_currency} via {route['route']}")
+    if not route.get("found"):
+        return json.dumps({"error": route.get("error", "No route found"), "suggestion": route.get("suggestion", "")})
 
-    # 4. Sign and Broadcast (via Mento Plugin which handles TEE signing internally/mocked)
-    # The MentoPlugin.execute_swap needs the private key or a signer.
-    # Currently MentoPlugin is instantiated with a signer in main.py? 
-    # Let's see main.py: mento_plugin = MentoPlugin(..., private_key=AGENT_PRIVATE_KEY)
-    # So the AGENT pays. 
-    
+    logger.info("Executing transfer: %s %s -> %s via Mento v2", amount, from_currency, to_currency)
+
+    # 5. Sign and Broadcast via Mento Broker.swapIn
+    # The TEE plugin holds the agent's signing account
+    signer = _tee_plugin.get_account() if _tee_plugin else None
+    if not signer:
+        return json.dumps({"error": "No signing account available (TEE plugin not configured)"})
+
     try:
         tx_hash = await _mento_plugin.execute_swap(
-            token_in=from_currency,
-            token_out=to_currency,
-            amount_in=Decimal(str(amount)),
-            recipient=recipient_address
+            route=route,
+            recipient=recipient_address,
+            signer=signer,
         )
     except Exception as e:
         return json.dumps({"error": f"Swap execution failed: {str(e)}"})
@@ -337,6 +349,416 @@ async def get_current_wallet_context() -> str:
     })
 
 # ═══════════════════════════════════════════════════════════════════
+# Helper: auto-swap CELO → target token when agent wallet is short
+# ═══════════════════════════════════════════════════════════════════
+
+async def _auto_swap_for_token(
+    w3,
+    signer,
+    target_symbol: str,
+    target_address: str,
+    deficit_wei: int,
+    target_decimals: int,
+    config,
+) -> Dict[str, Any]:
+    """Swap CELO → USDm → target token to cover a deficit in the agent wallet.
+
+    For USDm itself, only one hop is needed (CELO → USDm).
+    For other tokens (BRLm, EURm, etc.), two hops: CELO → USDm → target.
+
+    Returns dict with 'summary' on success or 'error' on failure.
+    """
+    from web3 import Web3
+    from plugins.mento_plugin import (
+        MENTO_BROKER_ADDRESS, BIPOOL_MANAGER_ADDRESS, EXCHANGE_IDS, BROKER_ABI,
+    )
+
+    CELO_ADDR = Web3.to_checksum_address(
+        config.token_addresses.get("CELO", "0x471EcE3750Da237f93B8E339c536989b8978a438")
+    )
+    USDm_ADDR = Web3.to_checksum_address(config.token_addresses.get("USDm", ""))
+    BROKER = Web3.to_checksum_address(MENTO_BROKER_ADDRESS)
+    PROVIDER = Web3.to_checksum_address(BIPOOL_MANAGER_ADDRESS)
+
+    broker = w3.eth.contract(address=BROKER, abi=BROKER_ABI)
+
+    ERC20_ABI = [
+        {"inputs": [{"name": "spender", "type": "address"}, {"name": "amount", "type": "uint256"}],
+         "name": "approve", "outputs": [{"name": "", "type": "bool"}], "stateMutability": "nonpayable", "type": "function"},
+        {"inputs": [{"name": "account", "type": "address"}],
+         "name": "balanceOf", "outputs": [{"name": "", "type": "uint256"}], "stateMutability": "view", "type": "function"},
+    ]
+
+    def _nonce():
+        return w3.eth.get_transaction_count(signer.address, "pending")
+
+    def _send(tx_dict):
+        signed = signer.sign_transaction(tx_dict)
+        h = w3.eth.send_raw_transaction(signed.raw_transaction)
+        r = w3.eth.wait_for_transaction_receipt(h, timeout=60)
+        return h.hex(), r["status"]
+
+    # Determine swap path
+    eid_celo_hex = EXCHANGE_IDS.get("USDm/CELO")
+    if not eid_celo_hex:
+        return {"error": "No CELO/USDm exchange ID configured"}
+
+    eid_celo = bytes.fromhex(eid_celo_hex)
+
+    if target_symbol == "USDm":
+        # Single hop: CELO → USDm
+        # Reverse-estimate: how much CELO do we need for deficit_wei of USDm?
+        # Use a generous estimate: query getAmountOut with increasing CELO amounts
+        celo_amount = int(deficit_wei * 4)  # ~$0.31/CELO, so 4x is safe overestimate
+        quote = broker.functions.getAmountOut(PROVIDER, eid_celo, CELO_ADDR, USDm_ADDR, celo_amount).call()
+        # Scale CELO amount to match deficit
+        if quote > 0:
+            celo_amount = int(celo_amount * deficit_wei / quote * 1.1)  # 10% extra
+        logger.info("Auto-swap: %s CELO -> USDm (need %s USDm)", celo_amount / 1e18, deficit_wei / 1e18)
+
+        celo_c = w3.eth.contract(address=CELO_ADDR, abi=ERC20_ABI)
+        tx = celo_c.functions.approve(BROKER, celo_amount).build_transaction(
+            {"from": signer.address, "nonce": _nonce(), "gas": 100_000, "gasPrice": w3.eth.gas_price}
+        )
+        _, s = _send(tx)
+        if s != 1:
+            return {"error": "CELO approve failed"}
+
+        quote = broker.functions.getAmountOut(PROVIDER, eid_celo, CELO_ADDR, USDm_ADDR, celo_amount).call()
+        tx = broker.functions.swapIn(PROVIDER, eid_celo, CELO_ADDR, USDm_ADDR, celo_amount, int(quote * 0.9)).build_transaction(
+            {"from": signer.address, "nonce": _nonce(), "gas": 500_000, "gasPrice": w3.eth.gas_price}
+        )
+        h, s = _send(tx)
+        if s != 1:
+            return {"error": f"CELO→USDm swap reverted (tx: {h})"}
+
+        return {"summary": f"Swapped {celo_amount/1e18:.4f} CELO → USDm"}
+
+    else:
+        # Two hops: CELO → USDm → target
+        # Find the exchange ID for USDm/target
+        pair_key = f"USDm/{target_symbol}"
+        eid_target_hex = EXCHANGE_IDS.get(pair_key)
+        if not eid_target_hex:
+            return {"error": f"No Mento pool for {pair_key}. Cannot auto-swap."}
+        eid_target = bytes.fromhex(eid_target_hex)
+        target_addr = Web3.to_checksum_address(target_address)
+
+        # Step 1: Figure out how much USDm we need for the deficit of target token
+        # Query: how much USDm for deficit_wei of target?
+        # We reverse-estimate by querying a large USDm amount
+        test_usdm = int(10 * 1e18)  # 10 USDm
+        test_out = broker.functions.getAmountOut(PROVIDER, eid_target, USDm_ADDR, target_addr, test_usdm).call()
+        if test_out == 0:
+            return {"error": f"Mento pool {pair_key} returned 0. Pool may be paused."}
+        usdm_needed = int(test_usdm * deficit_wei / test_out * 1.1)  # 10% buffer
+        logger.info("Auto-swap hop1: need ~%s USDm for %s %s", usdm_needed / 1e18, deficit_wei / (10**target_decimals), target_symbol)
+
+        # Step 2: Figure out how much CELO we need for that USDm
+        test_celo = int(5 * 1e18)  # 5 CELO
+        test_usdm_out = broker.functions.getAmountOut(PROVIDER, eid_celo, CELO_ADDR, USDm_ADDR, test_celo).call()
+        if test_usdm_out == 0:
+            return {"error": "CELO→USDm pool returned 0"}
+        celo_needed = int(test_celo * usdm_needed / test_usdm_out * 1.1)
+        logger.info("Auto-swap hop2: need ~%s CELO for %s USDm", celo_needed / 1e18, usdm_needed / 1e18)
+
+        # Check CELO balance
+        celo_c = w3.eth.contract(address=CELO_ADDR, abi=ERC20_ABI)
+        celo_bal = celo_c.functions.balanceOf(signer.address).call()
+        if celo_bal < celo_needed:
+            return {
+                "error": f"Insufficient CELO for auto-swap. Have {celo_bal/1e18:.4f}, need ~{celo_needed/1e18:.4f} CELO.",
+                "status": "insufficient_celo",
+            }
+
+        # Hop 1: CELO → USDm
+        tx = celo_c.functions.approve(BROKER, celo_needed).build_transaction(
+            {"from": signer.address, "nonce": _nonce(), "gas": 100_000, "gasPrice": w3.eth.gas_price}
+        )
+        _, s = _send(tx)
+        if s != 1:
+            return {"error": "CELO approve failed for hop1"}
+
+        quote1 = broker.functions.getAmountOut(PROVIDER, eid_celo, CELO_ADDR, USDm_ADDR, celo_needed).call()
+        tx = broker.functions.swapIn(PROVIDER, eid_celo, CELO_ADDR, USDm_ADDR, celo_needed, int(quote1 * 0.9)).build_transaction(
+            {"from": signer.address, "nonce": _nonce(), "gas": 500_000, "gasPrice": w3.eth.gas_price}
+        )
+        h1, s = _send(tx)
+        if s != 1:
+            return {"error": f"CELO→USDm swap reverted (tx: {h1})"}
+        logger.info("Auto-swap hop1 done: CELO→USDm tx=%s", h1)
+
+        # Hop 2: USDm → target
+        import time; time.sleep(2)  # Wait for balance to settle
+        usdm_c = w3.eth.contract(address=USDm_ADDR, abi=ERC20_ABI)
+        usdm_bal = usdm_c.functions.balanceOf(signer.address).call()
+        swap_amount = min(usdm_bal, usdm_needed)
+        if swap_amount == 0:
+            return {"error": "USDm balance is 0 after hop1 swap"}
+
+        tx = usdm_c.functions.approve(BROKER, swap_amount).build_transaction(
+            {"from": signer.address, "nonce": _nonce(), "gas": 100_000, "gasPrice": w3.eth.gas_price}
+        )
+        _, s = _send(tx)
+        if s != 1:
+            return {"error": "USDm approve failed for hop2"}
+
+        quote2 = broker.functions.getAmountOut(PROVIDER, eid_target, USDm_ADDR, target_addr, swap_amount).call()
+        tx = broker.functions.swapIn(PROVIDER, eid_target, USDm_ADDR, target_addr, swap_amount, int(quote2 * 0.9)).build_transaction(
+            {"from": signer.address, "nonce": _nonce(), "gas": 500_000, "gasPrice": w3.eth.gas_price}
+        )
+        h2, s = _send(tx)
+        if s != 1:
+            return {"error": f"USDm→{target_symbol} swap reverted (tx: {h2})"}
+        logger.info("Auto-swap hop2 done: USDm→%s tx=%s", target_symbol, h2)
+
+        return {"summary": f"Swapped {celo_needed/1e18:.4f} CELO → USDm → {target_symbol} (2 hops)"}
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Tool: send_token
+# ═══════════════════════════════════════════════════════════════════
+
+@function_tool
+async def send_token(
+    recipient_address: str,
+    amount: float,
+    token: str,
+    user_id: str = "unknown",
+) -> str:
+    """Send an ERC-20 token directly to a recipient address on Celo (no swap).
+
+    Use this when the user wants to send a token they already hold to someone,
+    e.g. "Send 1 BRLm to Charles" or "Transfer 5 cUSD to 0x...".
+    This does NOT perform a currency swap — it sends the exact token.
+
+    Args:
+        recipient_address: Wallet address of the recipient (0x...)
+        amount: Amount of tokens to send
+        token: Token symbol (e.g. BRLm, cUSD, USDm, CELO, etc.)
+        user_id: The ID of the user initiating the transfer.
+
+    Returns:
+        Transaction result with hash as JSON string
+    """
+    import json
+    from integrations.chain_config import ChainConfig
+
+    if not _tee_plugin:
+        return json.dumps({"error": "TEE plugin not configured — cannot sign transactions"})
+
+    # 1. Spending limit check
+    if _remittance_plugin:
+        if not _remittance_plugin.check_spending_limit(user_id, amount):
+            return json.dumps({
+                "error": f"Transaction amount {amount} exceeds your spending limit.",
+                "status": "failed"
+            })
+
+    # 2. KYC check
+    if _kyc_plugin:
+        try:
+            kyc_result = await _kyc_plugin.check_transfer_eligibility(user_id, amount)
+            if not kyc_result.get("eligible", True):
+                return json.dumps({
+                    "error": kyc_result.get("message", "KYC level insufficient"),
+                    "status": "kyc_required",
+                    "current_level": kyc_result.get("current_level", "none"),
+                })
+        except Exception as e:
+            logger.warning("KYC check failed (non-blocking): %s", e)
+
+    # 3. Compliance screening
+    if _compliance_agent_plugin:
+        try:
+            screening = await _compliance_agent_plugin.check_pre_transfer(
+                recipient_address=recipient_address,
+                destination_country="",
+                amount=amount,
+            )
+            if not screening.get("approved", True):
+                return json.dumps({
+                    "error": "Transfer blocked by compliance screening.",
+                    "status": "compliance_blocked",
+                })
+        except Exception as e:
+            logger.warning("Compliance screening failed (non-blocking): %s", e)
+
+    # 4. Resolve token address
+    config = ChainConfig.celo_sepolia()
+    aliases = {"cUSD": "USDm", "cEUR": "EURm", "cREAL": "BRLm"}
+    resolved_token = aliases.get(token, token)
+    token_address = config.token_addresses.get(resolved_token)
+
+    if not token_address:
+        return json.dumps({"error": f"Unknown token '{token}'. Supported: {', '.join(config.token_addresses.keys())}"})
+
+    # 5. Get signer from TEE plugin
+    signer = _tee_plugin.get_account()
+    if not signer:
+        return json.dumps({"error": "No signing account available"})
+
+    # 6. Execute ERC-20 transfer on-chain
+    if _mento_plugin and _mento_plugin.w3 and _mento_plugin.w3.is_connected():
+        try:
+            from web3 import Web3
+            from plugins.mento_plugin import (
+                MENTO_BROKER_ADDRESS, BIPOOL_MANAGER_ADDRESS, EXCHANGE_IDS, BROKER_ABI,
+            )
+
+            w3 = _mento_plugin.w3
+            decimals = 6 if "USDC" in resolved_token or "USDT" in resolved_token or "axlUSDC" in resolved_token else 18
+            amount_wei = int(Decimal(str(amount)) * (10 ** decimals))
+
+            ERC20_ABI = [
+                {
+                    "inputs": [
+                        {"name": "to", "type": "address"},
+                        {"name": "amount", "type": "uint256"},
+                    ],
+                    "name": "transfer",
+                    "outputs": [{"name": "", "type": "bool"}],
+                    "stateMutability": "nonpayable",
+                    "type": "function",
+                },
+                {
+                    "inputs": [
+                        {"name": "account", "type": "address"},
+                    ],
+                    "name": "balanceOf",
+                    "outputs": [{"name": "", "type": "uint256"}],
+                    "stateMutability": "view",
+                    "type": "function",
+                },
+                {
+                    "inputs": [
+                        {"name": "spender", "type": "address"},
+                        {"name": "amount", "type": "uint256"},
+                    ],
+                    "name": "approve",
+                    "outputs": [{"name": "", "type": "bool"}],
+                    "stateMutability": "nonpayable",
+                    "type": "function",
+                },
+            ]
+
+            token_contract = w3.eth.contract(
+                address=Web3.to_checksum_address(token_address),
+                abi=ERC20_ABI,
+            )
+
+            # 6a. Pre-flight balance check — does the agent wallet hold enough?
+            signer_balance = token_contract.functions.balanceOf(signer.address).call()
+            if signer_balance < amount_wei:
+                logger.info(
+                    "Agent wallet has %s but needs %s of %s — attempting auto-swap from CELO",
+                    signer_balance / (10 ** decimals), amount, resolved_token,
+                )
+                # Auto-swap: CELO -> USDm -> target token (two hops if needed)
+                try:
+                    deficit_wei = amount_wei - signer_balance
+                    # Add 5% buffer for slippage
+                    deficit_with_buffer = int(deficit_wei * 1.05)
+                    swap_result = await _auto_swap_for_token(
+                        w3, signer, resolved_token, token_address, deficit_with_buffer, decimals, config,
+                    )
+                    if swap_result.get("error"):
+                        return json.dumps(swap_result)
+                    logger.info("Auto-swap completed: %s", swap_result.get("summary", ""))
+                    # Re-check balance after swap
+                    signer_balance = token_contract.functions.balanceOf(signer.address).call()
+                    if signer_balance < amount_wei:
+                        return json.dumps({
+                            "error": f"Auto-swap succeeded but agent wallet still has insufficient {resolved_token}. "
+                                     f"Balance: {signer_balance / (10 ** decimals)}, needed: {amount}. "
+                                     f"Try a smaller amount.",
+                            "status": "insufficient_balance",
+                        })
+                except Exception as swap_err:
+                    logger.error("Auto-swap failed: %s", swap_err)
+                    return json.dumps({
+                        "error": f"Agent wallet has insufficient {resolved_token} "
+                                 f"(has {signer_balance / (10 ** decimals)}, needs {amount}). "
+                                 f"Auto-swap from CELO failed: {str(swap_err)[:100]}",
+                        "status": "insufficient_balance",
+                    })
+
+            nonce = w3.eth.get_transaction_count(signer.address)
+            tx = token_contract.functions.transfer(
+                Web3.to_checksum_address(recipient_address),
+                amount_wei,
+            ).build_transaction({
+                "from": signer.address,
+                "nonce": nonce,
+                "gas": 100_000,
+                "gasPrice": w3.eth.gas_price,
+            })
+            signed_tx = signer.sign_transaction(tx)
+            tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
+            receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
+            tx_hex = tx_hash.hex()
+
+            logger.info(
+                "ERC-20 transfer executed: %s %s -> %s (tx: %s, gas: %d, status: %d)",
+                amount, resolved_token, recipient_address[:10], tx_hex, receipt["gasUsed"], receipt["status"],
+            )
+
+            if receipt["status"] == 0:
+                return json.dumps({
+                    "error": f"Transfer reverted on-chain. The agent wallet may not hold enough {token}. "
+                             f"Tx: https://sepolia.celoscan.io/tx/{tx_hex}",
+                    "status": "reverted",
+                    "tx_hash": tx_hex,
+                })
+
+            result = {
+                "status": "success",
+                "tx_hash": tx_hex,
+                "amount": amount,
+                "token": token,
+                "recipient": recipient_address,
+                "explorer_url": f"https://sepolia.celoscan.io/tx/{tx_hex}",
+            }
+        except Exception as e:
+            logger.error("ERC-20 transfer failed: %s", e)
+            return json.dumps({"error": f"Token transfer failed: {str(e)}"})
+    else:
+        # Fallback: simulated transfer when RPC not connected
+        tx_hex = "0x" + "b3e5f7a9c1d2" * 5 + "0001"
+        logger.info("Simulated ERC-20 transfer: %s %s -> %s", amount, resolved_token, recipient_address[:10])
+        result = {
+            "status": "success",
+            "tx_hash": tx_hex,
+            "amount": amount,
+            "token": token,
+            "recipient": recipient_address,
+            "note": "Simulated — RPC not connected",
+            "explorer_url": f"https://sepolia.celoscan.io/tx/{tx_hex}",
+        }
+
+    # 7. Record transaction
+    if _remittance_plugin:
+        _remittance_plugin.record_transaction(
+            tx_hash=result["tx_hash"],
+            user_id=user_id,
+            amount=Decimal(str(amount)),
+            from_currency=token,
+            to_currency=token,
+            destination=recipient_address,
+            fees={"network_fee": 0.0001},
+        )
+
+    # 8. Record reputation
+    if _registry_plugin:
+        try:
+            await _registry_plugin.record_successful_task()
+        except Exception as e:
+            logger.warning("Failed to record reputation: %s", e)
+
+    return json.dumps(result)
+
+
+# ═══════════════════════════════════════════════════════════════════
 # Tool: compare_fees_with_providers
 # ═══════════════════════════════════════════════════════════════════
 
@@ -410,3 +832,79 @@ async def monitor_fee_changes(
         destination_country=destination_country,
     )
     return json.dumps(result)
+
+
+# ═════════════════════════════════════════════════════════════════
+# Tool: parse_transfer_intent
+# ═════════════════════════════════════════════════════════════════
+
+@function_tool
+async def parse_transfer_intent(
+    user_message: str,
+    user_id: str = "",
+) -> str:
+    """Parse a natural language message into a structured transfer intent.
+
+    Extracts amount, currency, recipient, frequency, and destination
+    from free-form text in any supported language (English, Spanish,
+    Portuguese, French, Swahili, Filipino).
+
+    Args:
+        user_message: The user's natural language message
+        user_id: Optional user identifier for language preference
+
+    Returns:
+        Structured intent as JSON string with amount, currency, recipient, etc.
+    """
+    import json
+
+    if not _intent_parsing_service:
+        return json.dumps({"error": "Intent parsing service not configured"})
+
+    intent = _intent_parsing_service.parse_intent(user_message, user_id)
+    return json.dumps(intent, default=str)
+
+
+# ═════════════════════════════════════════════════════════════════
+# Tool: find_optimal_routes
+# ═════════════════════════════════════════════════════════════════
+
+@function_tool
+async def find_optimal_routes(
+    from_currency: str,
+    to_currency: str,
+    amount: float,
+) -> str:
+    """Find all possible routes between two currencies across Mento pools.
+
+    Compares direct, single-hop, and multi-hop routes with slippage
+    analysis, liquidity scoring, and fee estimates. Returns a ranked
+    list of routes with a recommended best option.
+
+    Args:
+        from_currency: Source currency symbol (e.g. USDm, CELO, BRLm)
+        to_currency: Destination currency symbol (e.g. PHPm, XOFm, EURm)
+        amount: Amount in source currency
+
+    Returns:
+        Ranked routes with analysis as JSON string
+    """
+    import json
+
+    if not _route_optimization_service:
+        return json.dumps({"error": "Route optimization service not configured"})
+
+    result = await _route_optimization_service.find_routes(
+        from_currency=from_currency,
+        to_currency=to_currency,
+        amount=amount,
+    )
+
+    # Add analysis for the recommended route
+    if result.get("recommended"):
+        analysis = _route_optimization_service.analyze_route(
+            result["recommended"], amount
+        )
+        result["recommended_analysis"] = analysis
+
+    return json.dumps(result, default=str)

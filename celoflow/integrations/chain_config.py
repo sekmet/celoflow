@@ -56,7 +56,7 @@ class ChainConfig:
         )
 
     @classmethod
-    def celo_sepolia(cls, rpc_url: str = "https://forno.celo-sepolia.celo-testnet.org") -> ChainConfig:
+    def celo_sepolia(cls, rpc_url: str = "https://celo-sepolia.g.alchemy.com/v2/E1tpzIwNYKbEADvBUW4fnAq13UCobt_3") -> ChainConfig:
         return cls(
             chain_id=11142220,
             rpc_url=rpc_url,

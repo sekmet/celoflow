@@ -1,11 +1,12 @@
 /**
- * Multi-Token Balance Hook for CeloFlow - Working Version
+ * Multi-Token Balance Hook for CeloFlow - Dynamic Multicall Version
  *
- * Custom hook for fetching and managing balances across multiple tokens
- * using wagmi's useBalance hook with proper React hook rules.
+ * Custom hook for fetching and managing balances across ALL tokens
+ * in the registry using wagmi's useReadContracts (multicall) for
+ * efficient batch querying. Replaces hardcoded per-token calls.
  */
 
-import { useAccount, useBalance, useReadContract } from 'wagmi'
+import { useAccount, useBalance, useReadContracts } from 'wagmi'
 import { useMemo, useCallback, useState, useEffect } from 'react'
 import { 
   TokenBalance, 
@@ -18,10 +19,11 @@ import {
   getTokenContractAddress, 
   getTokensForNetwork,
   getPriorityTokens,
-  isStablecoin 
+  isStablecoin,
+  type TokenInfo
 } from '../lib/token-registry'
 import { tokenBalanceService } from '../services/tokenBalanceService'
-import { parseAbi } from 'viem'
+import { erc20Abi } from 'viem'
 
 interface UseTokenBalancesOptions {
   includeZeroBalances?: boolean
@@ -59,116 +61,71 @@ export function useTokenBalances(options: UseTokenBalancesOptions = {}): UseToke
     autoRefreshEnabled: autoRefresh
   })
 
-  // Get tokens to query based on options
-  const tokensToQuery = useMemo(() => {
+  // Resolve chain ID with fallback
+  const customChainId = import.meta.env.VITE_CELO_CHAIN_ID
+  const resolvedChainId = chain?.id || (customChainId ? parseInt(customChainId) : 42220)
+
+  // Get ERC-20 tokens to query based on options (excludes native CELO)
+  const erc20Tokens = useMemo(() => {
     let chainId = chain?.id
     
-    // If no chain ID but wallet is connected, try to detect from connected wallet
     if (!chainId && isConnected && address) {
-      console.log('[useTokenBalances] No chain ID from wagmi, trying fallback detection')
-      
-      // Use custom chain ID from environment variables if available
-      const customChainId = import.meta.env.VITE_CELO_CHAIN_ID
-      if (customChainId) {
-        chainId = parseInt(customChainId)
-        console.log('[useTokenBalances] Using custom chain ID from env:', chainId)
-      } else {
-        chainId = 42220 // Default to Celo Mainnet
-        console.log('[useTokenBalances] Using fallback chain ID:', chainId)
-      }
+      chainId = customChainId ? parseInt(customChainId) : 42220
     }
     
-    if (!chainId) {
-      console.log('[useTokenBalances] No chain ID available and wallet not connected')
-      return []
-    }
+    if (!chainId) return []
     
     const availableTokens = getTokensForNetwork(chainId)
-    console.log(`[useTokenBalances] Chain ${chainId}, found ${availableTokens.length} tokens:`, availableTokens.map(t => t.symbol))
+    const nonNative = availableTokens.filter(t => t.category !== 'native')
     
     if (priorityTokensOnly) {
       const prioritySymbols = getPriorityTokens()
-      const filtered = availableTokens.filter(token => 
-        prioritySymbols.includes(token.symbol)
-      )
-      console.log(`[useTokenBalances] Priority tokens only: ${filtered.length} tokens`)
-      return filtered
+      return nonNative.filter(token => prioritySymbols.includes(token.symbol))
     }
     
-    return availableTokens
-  }, [chain?.id, priorityTokensOnly, isConnected, address])
+    return nonNative
+  }, [chain?.id, priorityTokensOnly, isConnected, address, customChainId])
 
-  // Get native CELO balance separately (working version)
-  // Use custom chain ID from environment variables if available
-  const customChainId = import.meta.env.VITE_CELO_CHAIN_ID
-  const balanceChainId = chain?.id || (customChainId ? parseInt(customChainId) : 42220)
-  
-  const { data: nativeBalanceData, isLoading: isNativeLoading, error: nativeError } = useBalance({
+  // Get native CELO balance
+  const { data: nativeBalanceData, isLoading: isNativeLoading } = useBalance({
     address: address as `0x${string}`,
-    chainId: balanceChainId
+    chainId: resolvedChainId
   })
 
-  // ERC-20 ABI for balanceOf function
-  const erc20Abi = parseAbi([
-    'function balanceOf(address account) view returns (uint256)',
-    'function decimals() view returns (uint8)',
-    'function symbol() view returns (string)',
-    'function name() view returns (string)'
-  ])
+  // Build multicall contracts array for all ERC-20 tokens
+  const contracts = useMemo(() => {
+    if (!isConnected || !address) return []
+    
+    return erc20Tokens.map(token => {
+      let tokenAddress: string
+      try {
+        tokenAddress = getTokenContractAddress(token.symbol, resolvedChainId)
+      } catch {
+        return null
+      }
+      if (tokenAddress === '0x0000000000000000000000000000000000000000') return null
+      
+      return {
+        address: tokenAddress as `0x${string}`,
+        abi: erc20Abi,
+        functionName: 'balanceOf' as const,
+        args: [address as `0x${string}`],
+        chainId: resolvedChainId,
+      }
+    }).filter((c): c is NonNullable<typeof c> => c !== null)
+  }, [erc20Tokens, address, isConnected, resolvedChainId])
 
-  // Get key ERC-20 token balances using useReadContract (React Rules of Hooks compliant)
-  const { data: usdcBalanceData, isLoading: isUSDCLoading, error: usdcError } = useReadContract({
-    address: '0xceba9300f2b948710d2653dd7b07f33a8b32118c' as `0x${string}`,
-    abi: erc20Abi,
-    functionName: 'balanceOf',
-    args: [address as `0x${string}`],
-    chainId: balanceChainId,
-    query: { enabled: isConnected && !!address }
-  })
-
-  const { data: usdtBalanceData, isLoading: isUSDTLoading, error: usdtError } = useReadContract({
-    address: '0x48065fbbe25f71c9282ddf5e1cd6d6a887483d5e' as `0x${string}`,
-    abi: erc20Abi,
-    functionName: 'balanceOf',
-    args: [address as `0x${string}`],
-    chainId: balanceChainId,
-    query: { enabled: isConnected && !!address }
-  })
-
-  const { data: usdmBalanceData, isLoading: isUSDMLoading, error: usdmError } = useReadContract({
-    address: '0x765de816845861e75a25fca122bb6898b8b1282a' as `0x${string}`,
-    abi: erc20Abi,
-    functionName: 'balanceOf',
-    args: [address as `0x${string}`],
-    chainId: balanceChainId,
-    query: { enabled: isConnected && !!address }
-  })
-
-  const { data: eurmbalanceData, isLoading: isEURMLoading, error: eurError } = useReadContract({
-    address: '0x10a89a440b0c943d2aa7c2a75ef3445e6b3a1e4b' as `0x${string}`,
-    abi: erc20Abi,
-    functionName: 'balanceOf',
-    args: [address as `0x${string}`],
-    chainId: balanceChainId,
-    query: { enabled: isConnected && !!address }
-  })
-
-  const { data: brlmbalanceData, isLoading: isBRLMLoading, error: brlmError } = useReadContract({
-    address: '0x874069fa1eb16d44d6aF880e83451f1e28d31477' as `0x${string}`,
-    abi: erc20Abi,
-    functionName: 'balanceOf',
-    args: [address as `0x${string}`],
-    chainId: balanceChainId,
-    query: { enabled: isConnected && !!address }
+  // Single multicall for ALL ERC-20 token balances
+  const { data: multicallResults, isLoading: isMulticallLoading } = useReadContracts({
+    contracts,
+    query: { enabled: isConnected && !!address && contracts.length > 0 }
   })
 
   // Process balance data into TokenBalance objects
   const tokenBalances = useMemo(() => {
-    console.log(`[useTokenBalances] Processing balances for ${tokensToQuery.length} tokens`)
-    
     let chainId = chain?.id
     if (!chainId && isConnected && address) {
-      chainId = 42220 // Fallback to Celo Mainnet
+      chainId = resolvedChainId
     }
 
     const balances: TokenBalance[] = []
@@ -179,8 +136,6 @@ export function useTokenBalances(options: UseTokenBalancesOptions = {}): UseToke
       const balance = nativeBalanceData.value
       const formattedBalance = formatBalance(balance, token.decimals)
       
-      console.log(`[useTokenBalances] CELO balance: ${formattedBalance}`)
-      
       balances.push({
         symbol: token.symbol,
         name: token.name,
@@ -189,146 +144,73 @@ export function useTokenBalances(options: UseTokenBalancesOptions = {}): UseToke
         formattedBalance,
         contractAddress: getTokenContractAddress(token.symbol, chainId || 42220),
         category: token.category,
-        isNative: token.category === 'native',
+        isNative: true,
         lastUpdated: new Date()
       })
     }
 
-    // Add USDC balance
-    if (usdcBalanceData !== undefined) {
-      const token = TOKEN_REGISTRY.USDC
-      const balance = usdcBalanceData as bigint
-      const formattedBalance = formatBalance(balance, token.decimals)
-      
-      console.log(`[useTokenBalances] USDC balance: ${formattedBalance}`)
-      
-      if (includeZeroBalances || balance > 0n) {
-        balances.push({
-          symbol: token.symbol,
-          name: token.name,
-          balance,
-          decimals: token.decimals,
-          formattedBalance,
-          contractAddress: getTokenContractAddress(token.symbol, chainId || 42220),
-          category: token.category,
-          isNative: token.category === 'native',
-          lastUpdated: new Date()
-        })
+    // Process multicall results — map each result back to its token
+    if (multicallResults) {
+      // Build a filtered token list matching the contracts array
+      const filteredTokens: TokenInfo[] = []
+      for (const token of erc20Tokens) {
+        try {
+          const addr = getTokenContractAddress(token.symbol, resolvedChainId)
+          if (addr !== '0x0000000000000000000000000000000000000000') {
+            filteredTokens.push(token)
+          }
+        } catch {
+          // skip
+        }
       }
-    }
 
-    // Add USDT balance
-    if (usdtBalanceData !== undefined) {
-      const token = TOKEN_REGISTRY.USDT
-      const balance = usdtBalanceData as bigint
-      const formattedBalance = formatBalance(balance, token.decimals)
-      
-      console.log(`[useTokenBalances] USDT balance: ${formattedBalance}`)
-      
-      if (includeZeroBalances || balance > 0n) {
-        balances.push({
-          symbol: token.symbol,
-          name: token.name,
-          balance,
-          decimals: token.decimals,
-          formattedBalance,
-          contractAddress: getTokenContractAddress(token.symbol, chainId || 42220),
-          category: token.category,
-          isNative: token.category === 'native',
-          lastUpdated: new Date()
-        })
-      }
-    }
+      for (let i = 0; i < multicallResults.length; i++) {
+        const result = multicallResults[i]
+        const token = filteredTokens[i]
+        if (!token) continue
 
-    // Add USDm balance
-    if (usdmBalanceData !== undefined) {
-      const token = TOKEN_REGISTRY.USDm
-      const balance = usdmBalanceData as bigint
-      const formattedBalance = formatBalance(balance, token.decimals)
-      
-      console.log(`[useTokenBalances] USDm balance: ${formattedBalance}`)
-      
-      if (includeZeroBalances || balance > 0n) {
-        balances.push({
-          symbol: token.symbol,
-          name: token.name,
-          balance,
-          decimals: token.decimals,
-          formattedBalance,
-          contractAddress: getTokenContractAddress(token.symbol, chainId || 42220),
-          category: token.category,
-          isNative: token.category === 'native',
-          lastUpdated: new Date()
-        })
-      }
-    }
+        if (result.status === 'success' && result.result !== undefined) {
+          const balance = result.result as bigint
+          if (!includeZeroBalances && balance === 0n) continue
 
-    // Add EURm balance
-    if (eurmbalanceData !== undefined) {
-      const token = TOKEN_REGISTRY.EURm
-      const balance = eurmbalanceData as bigint
-      const formattedBalance = formatBalance(balance, token.decimals)
-      
-      console.log(`[useTokenBalances] EURm balance: ${formattedBalance}`)
-      
-      if (includeZeroBalances || balance > 0n) {
-        balances.push({
-          symbol: token.symbol,
-          name: token.name,
-          balance,
-          decimals: token.decimals,
-          formattedBalance,
-          contractAddress: getTokenContractAddress(token.symbol, chainId || 42220),
-          category: token.category,
-          isNative: token.category === 'native',
-          lastUpdated: new Date()
-        })
-      }
-    }
+          const formattedBalance = formatBalance(balance, token.decimals)
+          let contractAddr: string
+          try {
+            contractAddr = getTokenContractAddress(token.symbol, chainId || 42220)
+          } catch {
+            contractAddr = '0x0000000000000000000000000000000000000000'
+          }
 
-    // Add BRLm balance
-    if (brlmbalanceData !== undefined) {
-      const token = TOKEN_REGISTRY.BRLm
-      const balance = brlmbalanceData as bigint
-      const formattedBalance = formatBalance(balance, token.decimals)
-      
-      console.log(`[useTokenBalances] BRLm balance: ${formattedBalance}`)
-      
-      if (includeZeroBalances || balance > 0n) {
-        balances.push({
-          symbol: token.symbol,
-          name: token.name,
-          balance,
-          decimals: token.decimals,
-          formattedBalance,
-          contractAddress: getTokenContractAddress(token.symbol, chainId || 42220),
-          category: token.category,
-          isNative: token.category === 'native',
-          lastUpdated: new Date()
-        })
+          balances.push({
+            symbol: token.symbol,
+            name: token.name,
+            balance,
+            decimals: token.decimals,
+            formattedBalance,
+            contractAddress: contractAddr,
+            category: token.category,
+            isNative: false,
+            lastUpdated: new Date()
+          })
+        }
       }
     }
 
     // Enrich with USD values using the service
     const enrichedBalances = tokenBalanceService.enrichTokenBalances(balances)
-    const sortedBalances = tokenBalanceService.sortTokens(enrichedBalances)
-    
-    console.log(`[useTokenBalances] Final processed tokens: ${sortedBalances.length}`)
-    sortedBalances.forEach(token => {
-      console.log(`[useTokenBalances] Final token: ${token.symbol} = ${token.formattedBalance}`)
-    })
-    
-    return sortedBalances
+    return tokenBalanceService.sortTokens(enrichedBalances)
   }, [
-    tokensToQuery, 
+    erc20Tokens,
     chain?.id, 
     includeZeroBalances, 
     isConnected, 
     address,
-    nativeBalanceData
+    nativeBalanceData,
+    multicallResults,
+    resolvedChainId,
   ])
 
-  // Calculate portfolio summary
+  // Calculate portfolio
   const portfolio = useMemo((): TokenPortfolio => {
     const totalValueUsd = tokenBalances.reduce((sum, token) => 
       sum + (token.usdValue || 0), 0
@@ -351,10 +233,10 @@ export function useTokenBalances(options: UseTokenBalancesOptions = {}): UseToke
       totalValueUsd,
       totalValueChange24h,
       lastUpdated: new Date(),
-      isLoading: isNativeLoading || isUSDCLoading || isUSDTLoading || isUSDMLoading || isEURMLoading || isBRLMLoading,
+      isLoading: isNativeLoading || isMulticallLoading,
       error: hasError ? errorMessages : undefined
     }
-  }, [tokenBalances, address, chain?.id, isNativeLoading, isUSDCLoading, isUSDTLoading, isUSDMLoading, isEURMLoading, isBRLMLoading])
+  }, [tokenBalances, address, chain?.id, isNativeLoading, isMulticallLoading])
 
   // Calculate portfolio summary
   const summary = useMemo((): PortfolioSummary => {

@@ -1,12 +1,16 @@
 {
   "name": "celoflow",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.2.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview"
+    "dev": "bun --bun --hot vite dev --port 3000",
+    "build": "NODE_ENV=production bun --bun vite build",
+    "preview": "bun --bun vite preview",
+    "deploy": "NODE_ENV=production bun run build && wrangler pages deploy dist",
+    "test": "bun --bun vitest run",
+    "typecheck": "bunx tsc",
+    "cf-typegen": "wrangler types"
   },
   "dependencies": {
     "@metamask/sdk": "^0.34.0",
@@ -27,6 +31,7 @@
     "@vitejs/plugin-react": "^5.1.4",
     "tailwindcss": "^4.1.18",
     "typescript": "~5.9.3",
-    "vite": "^7.3.1"
+    "vite": "^7.3.1",
+    "wrangler": "^4.59.3"
   }
 }

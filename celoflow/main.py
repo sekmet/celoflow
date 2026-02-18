@@ -32,9 +32,12 @@ from services.translation_service import TranslationService
 from services.reputation_analytics import ReputationAnalyticsService
 from services.wallet_context_service import wallet_context_service
 from services.contacts_context_service import contacts_context_service
+from services.intent_parsing_service import IntentParsingService
+from services.route_optimization_service import RouteOptimizationService
 
 # Integrations
 from integrations.wise_client import WiseClient
+from integrations.x402_client import X402Client
 
 # Tools
 from tools import remittance_tools
@@ -93,13 +96,25 @@ Example workflow:
   on-chain exchange rates from the Broker contract.
 - Supported Mento v2 pools: USDm/PHPm, USDm/XOFm, USDm/CELO, USDm/axlUSDC.
 - Calculate transparent fee breakdowns (network + agent + liquidity).
-- Execute secure transfers using TEE-backed signing inside a Trusted \
-  Execution Environment (Intel TDX via Dstack).
+- **Send tokens directly** (BRLm, cUSD, USDm, EURm, CELO, etc.) to any \
+  recipient address using `send_token` — no swap needed.
+- Execute cross-currency swaps using TEE-backed signing inside a Trusted \
+  Execution Environment (Intel TDX via Dstack) via `execute_transfer`.
 - Verify agent identity and reputation on-chain (ERC-8004 standard).
 - Perform KYC/AML compliance checks with tiered verification levels.
 - Compare fees in real-time against Western Union, Wise, Remitly, MoneyGram.
 - Screen recipients against sanction lists via x402 compliance agents.
 - **Check user wallet balances** to provide personalized transfer recommendations.
+
+## CRITICAL: Choosing the Right Transfer Tool
+- **`send_token`**: Use when the user wants to send a token they already hold \
+  (e.g. "Send 1 BRLm to Charles", "Transfer 5 cUSD to 0x..."). This does a \
+  direct ERC-20 transfer — NO currency conversion.
+- **`execute_transfer`**: Use ONLY when the user wants to SWAP between different \
+  currencies (e.g. "Convert 100 cUSD to PHPm and send to Maria"). This uses \
+  the Mento v2 Broker for on-chain swaps.
+- When the user says "send X TokenA to Someone", ALWAYS use `send_token` \
+  (direct transfer). Only use `execute_transfer` if from_currency != to_currency.
 
 ## KYC Verification
 - Users have KYC levels: none, basic, standard, enhanced.
@@ -123,19 +138,33 @@ Example workflow:
 - If real-time data is unavailable, the system automatically falls back to static data.
 
 ## Interaction Style
-- Be concise and helpful.
+- Be concise and helpful. DO NOT be overly verbose.
 - **ALWAYS check wallet balances first** before suggesting transfer routes.
-- Always show the user the fee breakdown and savings vs. traditional \
-  remittance services (Western Union, Wise) before executing a transfer.
 - When asked about rates, use `find_optimal_route` to get live Mento rates.
-- For transfers, run compliance checks first, then confirm with the user \
-  before calling `execute_transfer`.
-- If the user asks about your identity or trust, use the on-chain registry \
-  tools to prove your registration and reputation.
 - Map user references to "cUSD" as "USDm" internally (they are equivalent \
   on Celo Sepolia).
 
-## Supported Corridors (Celo Sepolia)
+## Transfer Execution Flow
+When a user requests a transfer (e.g. "Send 1 BRLm to Charles"):
+1. Resolve the recipient from the user's contacts to get their wallet address.
+2. Call `send_token` (same-token transfer) or `execute_transfer` (cross-currency swap).
+3. After the tool returns, show the tx hash and explorer link.
+
+Guidelines:
+- "Send X token to Name" → use `send_token` with the contact's address.
+- "Convert X from A to B and send to Name" → use `execute_transfer`.
+- Execute transfers directly — the user expects immediate action without \
+  extra confirmation steps.
+- If the user says "Confirm" or "Yes" to a pending transfer, execute it now.
+
+If the user asks about your identity or trust, use the on-chain registry \
+tools to prove your registration and reputation.
+
+## Supported Tokens (Celo Sepolia)
+Direct transfers via `send_token`: USDm, EURm, BRLm, KESm, XOFm, PHPm, COPm, \
+GBPm, CADm, AUDm, ZARm, GHSm, NGNm, JPYm, CHFm, CELO, USDT, axlUSDC.
+
+## Supported Swap Corridors (Mento v2)
 cUSD (USDm) → PHPm (Philippines Peso), cUSD (USDm) → XOFm (West Africa CFA), \
 cUSD (USDm) → CELO (native token), cUSD (USDm) → axlUSDC (bridged USDC).
 
@@ -212,6 +241,25 @@ def create_agent() -> Agent:
     )
     reputation_analytics = ReputationAnalyticsService()
 
+    # Intent parsing service (multi-language NL → structured intent)
+    intent_parsing_service = IntentParsingService(
+        language_service=language_detection_service,
+        translation_service=translation_service,
+    )
+
+    # Route optimization service (multi-corridor Mento routing)
+    route_optimization_service = RouteOptimizationService(
+        mento_plugin=mento_plugin,
+    )
+
+    # x402 payment client (agent-to-agent payments)
+    x402_client = X402Client(
+        agent_wallet_address=os.getenv("AGENT_WALLET_ADDRESS"),
+        private_key=os.getenv("AGENT_PRIVATE_KEY"),
+        chain_id=int(os.getenv("CELO_CHAIN_ID", "44787")),
+        facilitator_url=os.getenv("X402_FACILITATOR_URL"),
+    )
+
     # Set up wallet context service with mento plugin
     wallet_context_service.set_mento_plugin(mento_plugin)
 
@@ -240,9 +288,16 @@ def create_agent() -> Agent:
         compliance_agent=compliance_agent_plugin,
         fee_comparison=fee_comparison_service,
         wise=wise_client,
+        intent_parsing=intent_parsing_service,
+        route_optimization=route_optimization_service,
+        x402=x402_client,
     )
 
     # ── Collect plugins ──────────────────────────────────────────
+
+    scheduler_plugin = SchedulerPlugin(
+        notification_plugin=notification_plugin,
+    )
 
     plugins = [
         tee_plugin,
@@ -250,7 +305,7 @@ def create_agent() -> Agent:
         mento_plugin,
         compliance_plugin,
         notification_plugin,
-        SchedulerPlugin(),
+        scheduler_plugin,
         kyc_plugin,
         compliance_agent_plugin,
     ]
@@ -270,9 +325,13 @@ def create_agent() -> Agent:
             remittance_tools.find_optimal_route,
             remittance_tools.calculate_fees,
             remittance_tools.execute_transfer,
+            remittance_tools.send_token,
             remittance_tools.get_wallet_balance,
+            remittance_tools.get_current_wallet_context,
             remittance_tools.compare_fees_with_providers,
             remittance_tools.monitor_fee_changes,
+            remittance_tools.parse_transfer_intent,
+            remittance_tools.find_optimal_routes,
         ],
         plugins=plugins,
     )
