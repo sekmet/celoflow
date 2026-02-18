@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { WagmiProvider } from 'wagmi';
 import { QueryClientProvider } from '@tanstack/react-query';
-import { Bot, ChevronRight, Globe, Lock, Wallet, Zap, CheckCircle2, Moon, Sun, ArrowLeft, Users } from 'lucide-react';
+import { Bot, ChevronRight, Globe, Lock, Wallet, CheckCircle2, Moon, Sun, ArrowLeft, Zap, Users } from 'lucide-react';
 import { ChatInterface } from './components/ChatInterface';
 import { SmartRouter } from './components/SmartRouter';
 import { WalletConnect } from './components/WalletConnect';
@@ -12,16 +12,30 @@ import { NAV_LINKS } from './constants';
 import { useI18n } from './lib/language';
 
 function AppContent() {
-  const [isDark, setIsDark] = useState(false);
+  const [isDark, setIsDark] = useState(() => {
+    // Initialize theme from localStorage or system preference
+    if (typeof window !== 'undefined') {
+      const savedTheme = localStorage.getItem('celoflow-theme');
+      if (savedTheme) {
+        return savedTheme === 'dark';
+      }
+      // Fallback to system preference
+      return window.matchMedia('(prefers-color-scheme: dark)').matches;
+    }
+    return false;
+  });
   const [currentView, setCurrentView] = useState<'landing' | 'app'>('landing');
   const [showContacts, setShowContacts] = useState(false);
   const { t } = useI18n();
 
   useEffect(() => {
+    // Update DOM and localStorage when theme changes
     if (isDark) {
       document.documentElement.classList.add('dark');
+      localStorage.setItem('celoflow-theme', 'dark');
     } else {
       document.documentElement.classList.remove('dark');
+      localStorage.setItem('celoflow-theme', 'light');
     }
   }, [isDark]);
 
@@ -77,9 +91,11 @@ function AppContent() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-16">
             <div className="flex items-center gap-2 cursor-pointer" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}>
-              <div className="w-8 h-8 bg-black dark:bg-celo-green rounded-lg flex items-center justify-center text-white">
-                <Zap className="w-5 h-5 fill-current" />
-              </div>
+              <img 
+                src="/logo.png" 
+                alt="CeloFlow Logo" 
+                className="w-8 h-8 rounded-lg"
+              />
               <span className="font-display font-bold text-xl tracking-tight text-gray-900 dark:text-white">CeloFlow</span>
             </div>
             
@@ -101,7 +117,7 @@ function AppContent() {
                 </button>
                 <button 
                     onClick={() => setCurrentView('app')}
-                    className="bg-black dark:bg-white text-white dark:text-black px-5 py-2 rounded-full text-sm font-medium hover:bg-gray-800 dark:hover:bg-gray-200 transition-colors flex items-center gap-2"
+                    className="bg-green-600 text-white px-5 py-2 rounded-full text-sm font-medium hover:bg-gray-800 dark:hover:bg-gray-200 transition-colors flex items-center gap-2"
                 >
                     {t('Launch App')}
                     <ChevronRight className="w-4 h-4" />
@@ -246,9 +262,11 @@ function AppContent() {
       <footer className="bg-gray-50 dark:bg-gray-900/50 py-12 border-t border-gray-200 dark:border-gray-800 transition-colors duration-300">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col md:flex-row justify-between items-center gap-6">
             <div className="flex items-center gap-2">
-                <div className="w-6 h-6 bg-gray-900 dark:bg-gray-700 rounded flex items-center justify-center text-white">
-                    <Zap className="w-3 h-3 fill-current" />
-                </div>
+                <img 
+                    src="/logo.png" 
+                    alt="CeloFlow Logo" 
+                    className="w-6 h-6 rounded"
+                />
                 <span className="font-bold text-gray-900 dark:text-white">CeloFlow</span>
             </div>
             <div className="flex gap-8 text-sm text-gray-500 dark:text-gray-400">

@@ -14,6 +14,23 @@
   --animate-float: float 6s ease-in-out infinite;
   --animate-status-pulse: statusPulse 1.5s ease-in-out infinite alternate;
 
+  /* Configure dark mode for Tailwind v4 */
+  --default-transition-duration: 300ms;
+  --default-transition-timing-function: ease-in-out;
+  
+  /* Define dark mode colors explicitly */
+  --color-gray-50: #f9fafb;
+  --color-gray-100: #f3f4f6;
+  --color-gray-200: #e5e7eb;
+  --color-gray-300: #d1d5db;
+  --color-gray-400: #9ca3af;
+  --color-gray-500: #6b7280;
+  --color-gray-600: #4b5563;
+  --color-gray-700: #374151;
+  --color-gray-800: #1f2937;
+  --color-gray-900: #111827;
+  --color-white: #ffffff;
+
   @keyframes fadeInUp {
     0% { opacity: 0; transform: translateY(10px); }
     100% { opacity: 1; transform: translateY(0); }
@@ -28,6 +45,32 @@
     0% { opacity: 0.7; transform: scale(0.95); }
     100% { opacity: 1; transform: scale(1); }
   }
+}
+
+/* Dark mode styles - explicit approach */
+.dark {
+  --color-gray-50: #111827;
+  --color-gray-100: #1f2937;
+  --color-gray-200: #374151;
+  --color-gray-300: #4b5563;
+  --color-gray-400: #6b7280;
+  --color-gray-500: #9ca3af;
+  --color-gray-600: #d1d5db;
+  --color-gray-700: #e5e7eb;
+  --color-gray-800: #f3f4f6;
+  --color-gray-900: #f9fafb;
+  --color-white: #111827;
+}
+
+/* Dark mode styles - Tailwind v4 approach */
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+  }
+}
+
+.dark {
+  color-scheme: dark;
 }
 
 body {

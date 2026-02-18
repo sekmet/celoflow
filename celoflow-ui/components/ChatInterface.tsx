@@ -181,7 +181,23 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ className = '', fu
       
       return () => clearTimeout(timeoutId);
     }
-  }, [messages, expandedFees]); // Scroll when fees expand too
+  }, [messages, expandedFees, isStreaming]); // Also trigger on streaming state changes
+
+  // Additional effect to handle streaming content updates
+  useEffect(() => {
+    if (isStreaming && scrollRef.current) {
+      const scrollContainer = scrollRef.current;
+      const isAtBottom = scrollContainer.scrollHeight - scrollContainer.scrollTop <= scrollContainer.clientHeight + 50;
+      
+      if (!isUserScrolling.current || isAtBottom) {
+        // Force scroll during streaming
+        scrollContainer.scrollTo({
+          top: scrollContainer.scrollHeight,
+          behavior: 'smooth'
+        });
+      }
+    }
+  }, [isStreaming, streamingMsgId]); // Trigger when streaming starts or message ID changes
 
   // Handle scroll events to detect user scrolling
   const handleScroll = useCallback(() => {
@@ -324,6 +340,18 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({ className = '', fu
       setMessages(prev =>
         prev.map(m => (m.id === assistantId ? { ...m, content } : m)),
       );
+      
+      // Trigger scroll after content update
+      if (scrollRef.current && (!isUserScrolling.current || 
+          (scrollRef.current.scrollHeight - scrollRef.current.scrollTop <= scrollRef.current.clientHeight + 50))) {
+        setTimeout(() => {
+          scrollRef.current?.scrollTo({
+            top: scrollRef.current.scrollHeight,
+            behavior: 'smooth'
+          });
+        }, 10); // Small delay to ensure DOM is updated
+      }
+      
       rafId = null;
     };
 
